@@ -1,0 +1,63 @@
+import requests
+from typing import Optional, List
+
+from .errors import MechanixError
+from .attribution import AttributionModule
+from .steering import SteeringModule
+from .raag import RAAGModule
+from .generation import GenerationModule
+from .model import ModelModule
+from .base import _BaseModule
+
+class Mechanix:
+    """
+    A client for interacting with the Axionic API.
+    """
+    def __init__(self, host: str = "127.0.0.1", port: int = 8000):
+        self.base_url = f"http://{host}:{port}"
+        self.model_name: Optional[str] = None
+        self.num_layers: Optional[int] = None
+
+        # Initialize API modules
+        self.attribution = AttributionModule(self)
+        self.steering = SteeringModule(self)
+        self.raag = RAAGModule(self)
+        self.generation = GenerationModule(self)
+        self.model = ModelModule(self)
+
+    def load_model(self, model_name: str) -> 'Mechanix':
+        """
+        Loads a model into the service, making it available for other operations.
+        Corresponds to the /load endpoint.
+        """
+        try:
+            response = requests.post(f"{self.base_url}/load", json={"model_name": model_name})
+            response.raise_for_status()
+            data = response.json()
+            
+            self.model_name = data.get("model_name")
+            self.num_layers = data.get("num_layers")
+            return self
+        except requests.exceptions.RequestException as e:
+            error_message = f"Failed to load model '{model_name}': {e}"
+            if e.response is not None:
+                error_message += f" | Server response: {e.response.text}"
+            raise MechanixError(error_message) from e
+
+    def require_model_loaded(self):
+        """Raises an error if a model hasn't been loaded."""
+        if not self.model_name:
+            raise MechanixError("No model loaded. Please call client.load_model('your-model') first.")
+
+    @staticmethod
+    def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:
+        """
+        Fetches the list of available public models from Hugging Face.
+        This is a static method and does not require a model to be loaded.
+        """
+        try:
+            response = requests.get(f"{host}/models")
+            response.raise_for_status()
+            return response.json().get("models", [])
+        except requests.exceptions.RequestException as e:
+            raise MechanixError(f"Could not fetch Hugging Face models: {e}") from e
