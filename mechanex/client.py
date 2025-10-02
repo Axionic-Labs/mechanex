@@ -1,7 +1,7 @@
 import requests
 from typing import Optional, List
 
-from .errors import MechanixError
+from .errors import MechanexError
 from .attribution import AttributionModule
 from .steering import SteeringModule
 from .raag import RAAGModule
@@ -9,7 +9,7 @@ from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
 
-class Mechanix:
+class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
@@ -17,6 +17,7 @@ class Mechanix:
         self.base_url = f"http://{host}:{port}"
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
+        self.api_key = None
 
         # Initialize API modules
         self.attribution = AttributionModule(self)
@@ -25,13 +26,25 @@ class Mechanix:
         self.generation = GenerationModule(self)
         self.model = ModelModule(self)
 
-    def load_model(self, model_name: str) -> 'Mechanix':
+    def _get_headers(self) -> dict:
+        """Return headers including Authorization if api_key is set."""
+        headers = {}
+        if self.api_key is not None:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            raise MechanexError("Please provide an API key to use Mechanex")
+        return headers
+
+    def set_key(self, api_key):
+        self.api_key = api_key
+
+    def load_model(self, model_name: str) -> 'Mechanex':
         """
         Loads a model into the service, making it available for other operations.
         Corresponds to the /load endpoint.
         """
         try:
-            response = requests.post(f"{self.base_url}/load", json={"model_name": model_name})
+            response = requests.post(f"{self.base_url}/load", json={"model_name": model_name}, headers=self._get_headers())
             response.raise_for_status()
             data = response.json()
             
@@ -42,12 +55,12 @@ class Mechanix:
             error_message = f"Failed to load model '{model_name}': {e}"
             if e.response is not None:
                 error_message += f" | Server response: {e.response.text}"
-            raise MechanixError(error_message) from e
+            raise MechanexError(error_message) from e
 
     def require_model_loaded(self):
         """Raises an error if a model hasn't been loaded."""
         if not self.model_name:
-            raise MechanixError("No model loaded. Please call client.load_model('your-model') first.")
+            raise MechanexError("No model loaded. Please call client.load_model('your-model') first.")
 
     @staticmethod
     def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:
@@ -60,4 +73,4 @@ class Mechanix:
             response.raise_for_status()
             return response.json().get("models", [])
         except requests.exceptions.RequestException as e:
-            raise MechanixError(f"Could not fetch Hugging Face models: {e}") from e
+            raise MechanexError(f"Could not fetch Hugging Face models: {e}") from e

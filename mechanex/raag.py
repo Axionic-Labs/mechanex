@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List
 from .base import _BaseModule
 
 class RAAGModule(_BaseModule):
