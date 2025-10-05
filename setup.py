@@ -16,7 +16,8 @@ setup(
     install_requires=[
         "requests>=2.20.0",
         "ipython",
-        "jupyter"
+        "jupyter",
+        "matplotlib"
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

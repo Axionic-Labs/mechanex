@@ -13,8 +13,8 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, host: str = "127.0.0.1", port: int = 8000):
-        self.base_url = f"http://{host}:{port}"
+    def __init__(self, base_url: str = "https://8000-01k5053eee7xtgr2e8537gcx4c.cloudspaces.litng.ai"):
+        self.base_url = base_url
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None

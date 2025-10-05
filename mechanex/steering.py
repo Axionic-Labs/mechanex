@@ -4,7 +4,7 @@ from .base import _BaseModule
 
 class SteeringModule(_BaseModule):
     """Module for steering vector APIs."""
-    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "caa") -> dict:
+    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> dict:
         """
         Computes and stores steering vectors from prompts.
         Corresponds to the /steering/generate endpoint.
@@ -17,7 +17,7 @@ class SteeringModule(_BaseModule):
             "method": method
         })
         
-    def generate_from_jsonl(self, dataset_path: str, layer_idxs: Optional[List[int]] = None, method: str = "caa") -> dict:
+    def generate_from_jsonl(self, dataset_path: str, layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> dict:
         """
         A helper to generate steering vectors from a .jsonl file.
         Each line in the file should be a JSON object with 'positive' and 'negative' keys.
