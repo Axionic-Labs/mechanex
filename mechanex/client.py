@@ -13,7 +13,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "http://34.23.21.28:8000"):
+    def __init__(self, base_url: str = "http://35.231.46.12:8000"):
         self.base_url = base_url
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
