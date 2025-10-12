@@ -13,7 +13,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "http://35.231.46.12:8000"):
+    def __init__(self, base_url: str = "https://mechanex-waitlist-api-926733027827.us-central1.run.app/api"):
         self.base_url = base_url
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
@@ -47,7 +47,7 @@ class Mechanex:
             response = requests.post(f"{self.base_url}/load", json={"model_name": model_name}, headers=self._get_headers())
             response.raise_for_status()
             data = response.json()
-            
+            print(data)
             self.model_name = data.get("model_name")
             self.num_layers = data.get("num_layers")
             return self
