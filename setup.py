@@ -17,7 +17,7 @@ setup(
         "requests>=2.20.0",
         "ipython",
         "jupyter",
-        "matplotlib"
+        "matplotlib",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
