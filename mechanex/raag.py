@@ -31,12 +31,16 @@ def add_glow_effect(patch, ax, glow_color, n_layers=10, max_alpha=0.3, diff_line
 
 class RAAGModule(_BaseModule):
     """Module for Retrieval-Augmented Answer Generation APIs."""
-    def generate(self, qa_entries: List[dict], docs: List[dict]) -> dict:
+    def generate(self, qa_entries: List[dict], docs: List[dict] = None, pinecone_index_name: str = None) -> dict:
         """
         Performs Retrieval-Augmented Answer Generation.
         Corresponds to the /raag/generate endpoint.
         """
-        raag = self._post("/raag/generate", {"qa_entries": qa_entries, "docs": docs})
+        if docs is not None:
+            raag = self._post("/raag/generate", {"qa_entries": qa_entries, "docs": docs})
+        elif pinecone_index_name is not None: 
+            raag = self._post("/raag/generate", {"qa_entries": qa_entries, "pinecone_index_name": pinecone_index_name})
+            
         try:
             data = raag["data_by_question"]["0"]
             edges_dict = data["validated"]["validated_edges"]

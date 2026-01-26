@@ -8,13 +8,21 @@ from .raag import RAAGModule
 from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
+<<<<<<< HEAD
 import os
+=======
+from .sae import SAEModule
+>>>>>>> 63f4b41 (Connected with new deployment)
 
 class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
+<<<<<<< HEAD
     def __init__(self, base_url: str = os.environ.get("API_URL") or "https://mechanex-waitlist-api-926733027827.us-central1.run.app/api"):
+=======
+    def __init__(self, base_url: str = "https://axionic-mvp-backend-594546489999.us-east4.run.app"):
+>>>>>>> 63f4b41 (Connected with new deployment)
         self.base_url = base_url
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
@@ -26,6 +34,7 @@ class Mechanex:
         self.raag = RAAGModule(self)
         self.generation = GenerationModule(self)
         self.model = ModelModule(self)
+        self.sae = SAEModule(self)
 
     def _get_headers(self) -> dict:
         """Return headers including Authorization if api_key is set."""
@@ -57,11 +66,6 @@ class Mechanex:
             if e.response is not None:
                 error_message += f" | Server response: {e.response.text}"
             raise MechanexError(error_message) from e
-
-    def require_model_loaded(self):
-        """Raises an error if a model hasn't been loaded."""
-        if not self.model_name:
-            raise MechanexError("No model loaded. Please call client.load_model('your-model') first.")
 
     @staticmethod
     def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:

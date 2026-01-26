@@ -15,7 +15,6 @@ class _BaseModule:
 
     def _post(self, endpoint: str, data: dict) -> dict:
         """Performs a POST request with Authorization and handles errors."""
-        self._client.require_model_loaded()
         try:
             response = requests.post(
                 f"{self._client.base_url}{endpoint}",
@@ -32,7 +31,6 @@ class _BaseModule:
 
     def _get(self, endpoint: str) -> dict:
         """Performs a GET request with Authorization and handles errors."""
-        self._client.require_model_loaded()
         try:
             response = requests.get(
                 f"{self._client.base_url}{endpoint}",
