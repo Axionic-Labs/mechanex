@@ -8,21 +8,13 @@ from .raag import RAAGModule
 from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
-<<<<<<< HEAD
-import os
-=======
 from .sae import SAEModule
->>>>>>> 63f4b41 (Connected with new deployment)
 
 class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-<<<<<<< HEAD
-    def __init__(self, base_url: str = os.environ.get("API_URL") or "https://mechanex-waitlist-api-926733027827.us-central1.run.app/api"):
-=======
     def __init__(self, base_url: str = "https://axionic-mvp-backend-594546489999.us-east4.run.app"):
->>>>>>> 63f4b41 (Connected with new deployment)
         self.base_url = base_url
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
