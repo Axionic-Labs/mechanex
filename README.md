@@ -102,5 +102,15 @@ for node in graph:
     print(node)
 ```
 
+## Deploying Remote Hooks
+
+If you want to host your own instance of the remote hooks server, follow these steps:
+
+1. **Model Hosting**: Ensure the model you want to use is available on [Hugging Face](https://huggingface.co/).
+2. **Docker Image**: Use the official Docker image: `axioniclabs/remote-hooks:general`. You can find it on [Docker Hub](https://hub.docker.com/repository/docker/axioniclabs/remote-hooks/general).
+3. **Configuration**: Set the following environment variables in your deployment:
+   - `MODEL_NAME`: The Hugging Face model identifier (e.g., `meta-llama/Llama-3.2-1B`).
+   - `HF_TOKEN`: Your Hugging Face access token.
+
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/)

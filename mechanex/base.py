@@ -13,6 +13,36 @@ class _BaseModule:
         """
         self._client = client
 
+    def _handle_error(self, e: requests.exceptions.RequestException):
+        """Internal helper to parse requests errors and raise appropriate MechanexError."""
+        from .errors import APIError, AuthenticationError, NotFoundError, ValidationError
+        
+        message = f"Request failed"
+        status_code = None
+        details = None
+
+        if e.response is not None:
+            status_code = e.response.status_code
+            try:
+                error_data = e.response.json()
+                # Handle FastAPI detail format
+                if isinstance(error_data, dict) and "detail" in error_data:
+                    message = error_data["detail"]
+                else:
+                    message = str(error_data)
+                details = error_data
+            except Exception:
+                message = e.response.text or str(e)
+
+        if status_code == 401:
+            raise AuthenticationError(f"Authentication failed: {message}", status_code, details) from e
+        elif status_code == 404:
+            raise NotFoundError(f"Resource not found: {message}", status_code, details) from e
+        elif status_code == 422:
+            raise ValidationError(f"Validation error: {message}", status_code, details) from e
+        else:
+            raise APIError(message, status_code, details) from e
+
     def _post(self, endpoint: str, data: dict) -> dict:
         """Performs a POST request with Authorization and handles errors."""
         try:
@@ -24,10 +54,7 @@ class _BaseModule:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            error_message = f"API request to {endpoint} failed: {e}"
-            if e.response is not None:
-                error_message += f" | Server response: {e.response.text}"
-            raise MechanexError(error_message) from e
+            self._handle_error(e)
 
     def _get(self, endpoint: str) -> dict:
         """Performs a GET request with Authorization and handles errors."""
@@ -39,7 +66,4 @@ class _BaseModule:
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
-            error_message = f"API request to {endpoint} failed: {e}"
-            if e.response is not None:
-                error_message += f" | Server response: {e.response.text}"
-            raise MechanexError(error_message) from e
+            self._handle_error(e)
