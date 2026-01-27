@@ -20,9 +20,6 @@ import os
 
 # Set your API key
 mx.set_key("your-api-key-here")
-
-# Load a model
-mx.load_model("meta-llama/Llama-3.1-8B")
 ```
 
 ### 2. Standard Generation
