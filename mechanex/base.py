@@ -45,25 +45,8 @@ class _BaseModule:
 
     def _post(self, endpoint: str, data: dict) -> dict:
         """Performs a POST request with Authorization and handles errors."""
-        try:
-            response = requests.post(
-                f"{self._client.base_url}{endpoint}",
-                json=data,
-                headers=self._client._get_headers()
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            self._handle_error(e)
+        return self._client._post(endpoint, data)
 
     def _get(self, endpoint: str) -> dict:
         """Performs a GET request with Authorization and handles errors."""
-        try:
-            response = requests.get(
-                f"{self._client.base_url}{endpoint}",
-                headers=self._client._get_headers()
-            )
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            self._handle_error(e)
+        return self._client._get(endpoint)

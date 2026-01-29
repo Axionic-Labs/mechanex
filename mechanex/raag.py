@@ -36,6 +36,10 @@ class RAAGModule(_BaseModule):
         Performs Retrieval-Augmented Answer Generation.
         Corresponds to the /raag/generate endpoint.
         """
+        if not self._client.model_name and not self._client.local_model:
+            from .errors import MechanexError
+            raise MechanexError("No model loaded. Call mx.load_model() or mx.set_local_model() first.")
+
         if docs is not None:
             raag = self._post("/raag/generate", {"qa_entries": qa_entries, "docs": docs})
         elif pinecone_index_name is not None: 

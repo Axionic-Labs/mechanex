@@ -8,6 +8,10 @@ class AttributionModule(_BaseModule):
         Computes attribution scores by patching the model.
         Corresponds to the /attribution-patching/scores endpoint.
         """
+        if not self._client.model_name and not self._client.local_model:
+            from .errors import MechanexError
+            raise MechanexError("No model loaded. Call mx.load_model() or mx.set_local_model() first.")
+
         return self._post("/attribution-patching/scores", {
             "clean_prompt": clean_prompt,
             "corrupted_prompt": corrupted_prompt,

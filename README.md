@@ -1,8 +1,6 @@
 # Mechanex
 
-Mechanex is a powerful Python library for interacting with the Axionic API, designed for mechanistically debugging, steering, and monitoring Large Language Models (LLMs).
-
-Learn more at [axioniclabs.ai](https://axioniclabs.ai/)
+Mechanex allows you to control and debug your LLMs. Learn more at [axioniclabs.ai](https://axioniclabs.ai/)
 
 ## Installation
 
@@ -13,13 +11,18 @@ pip install mechanex
 ## Quick Start
 
 ### 1. Initialize the Client
+You must authenticate before using any features. You can do this by running `mechanex login` in your terminal (which saves your **session token** globally), or by setting an API key manually in your code.
 
+**Python API:**
 ```python
 import mechanex as mx
-import os
-
-# Set your API key
 mx.set_key("your-api-key-here")
+```
+
+**CLI:**
+Authenticate via user login to enable usage in all your scripts without manual configuration:
+```bash
+mechanex login
 ```
 
 ### 2. Standard Generation
@@ -32,6 +35,35 @@ output = mx.generation.generate(
 )
 print(output)
 ```
+
+## Local Model Management
+
+Mechanex allows you to load models locally for inspection and low-latency hooks.
+
+### Loading a Local Model
+```python
+import mechanex as mx
+mx.set_key("your-api-key-here") # Required even for local mode
+
+mx.load("gpt2") # Uses transformer-lens to load the model
+```
+
+### Unloading a Model
+To free up GPU memory and switch back to remote execution flow:
+```python
+mx.unload()
+```
+
+## CLI Commands
+
+The `mechanex` CLI provides utilities for managing your account and keys.
+
+- `mechanex signup`: Register a new account.
+- `mechanex login`: Authenticate and save your credentials.
+- `mechanex whoami`: View your current session and profile.
+- `mechanex list-api-keys`: View all your active API keys.
+- `mechanex create-api-key`: Generate a new persistent API key.
+- `mechanex logout`: Clear your local session credentials.
 
 ## Steering Vectors
 
@@ -55,12 +87,6 @@ steered_output = mx.generation.generate(
 )
 ```
 
-### Load from JSONL
-You can also generate vectors from a dataset:
-```python
-vector_id = mx.steering.generate_from_jsonl("path/to/dataset.jsonl")
-```
-
 ## SAE (Sparse Autoencoder) Pipeline
 
 The SAE pipeline provides advanced behavioral detection and automatic correction.
@@ -82,35 +108,66 @@ Utilize SAEs to detect behavioral drift and automatically apply corrections.
 response = mx.sae.generate(
     prompt="Tell me a secret",
     auto_correct=True,
-    behavior_names=["toxicity"] # Optional: filter for specific behaviors
+    behavior_names=["toxicity"]
 )
-print(response) # Returns the generated text string
+print(response)
 ```
 
-### 3. List Behaviors
+## Deployment & Serving
+
+### Local OpenAI-Compatible Server
+Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API.
+
 ```python
-all_behaviors = mx.sae.list_behaviors()
+import mechanex as mx
+mx.load("gpt2")
+mx.serve(port=8000)
 ```
 
-## Model Utilities
+You can then interact with it using any standard tool, like the **OpenAI Python client**. Mechanix supports custom parameters via `extra_body` for mechanistic features:
 
-### Inspect the Model Graph
-Return the layer structure of the currently loaded model.
 ```python
-graph = mx.model.get_graph()
-for node in graph:
-    print(node)
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="any")
+
+# 1. Standard Chat Completion
+completion = client.chat.completions.create(
+    model="mechanex",
+    messages=[{"role": "user", "content": "Hello!"}]
+)
+
+# 2. Steered Completion (using extra_body)
+steered_completion = client.chat.completions.create(
+    model="mechanex",
+    messages=[{"role": "user", "content": "Hello!"}],
+    extra_body={
+        "steering_vector": "your-vector-id",
+        "steering_strength": 2.0
+    }
+)
+
+# 3. SAE-monitored Completion
+sae_completion = client.chat.completions.create(
+    model="mechanex",
+    messages=[{"role": "user", "content": "How are you?"}],
+    extra_body={
+        "behavior_names": ["toxicity"],
+        "auto_correct": True
+    }
+)
 ```
 
-## Deploying Remote Hooks
+### vLLM Integration
+For high-performance serving, you can integrate with vLLM by passing `use_vllm=True` to the `serve` method.
 
-If you want to host your own instance of the remote hooks server, follow these steps:
+### Deploying Remote Hooks
+If you want to host your own instance of the remote hooks server:
 
-1. **Model Hosting**: Ensure the model you want to use is available on [Hugging Face](https://huggingface.co/).
-2. **Docker Image**: Use the official Docker image: `axioniclabs/remote-hooks:general`. You can find it on [Docker Hub](https://hub.docker.com/r/axioniclabs/remote-hooks).
-3. **Configuration**: Set the following environment variables in your deployment:
-   - `MODEL_NAME`: The Hugging Face model identifier (e.g., `meta-llama/Llama-3.2-1B`).
-   - `HF_TOKEN`: Your Hugging Face access token.
+1. **Docker Image**: Use `axioniclabs/remote-hooks:general`.
+2. **Environment Variables**:
+   - `MODEL_NAME`: Hugging Face model ID.
+   - `HF_TOKEN`: Your Hugging Face token.
 
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/)
