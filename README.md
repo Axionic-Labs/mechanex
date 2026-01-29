@@ -1,6 +1,6 @@
 # Mechanex
 
-Mechanex allows you to control and debug your LLMs. Learn more at [axioniclabs.ai](https://axioniclabs.ai/)
+Mechanex allows you to optimize, align, and correct your generative AI models in production. 
 
 ## Installation
 
@@ -11,7 +11,7 @@ pip install mechanex
 ## Quick Start
 
 ### 1. Initialize the Client
-You must have an API key to use mechanex. The CLI helps you manage this easily.
+You must have an API key to use mechanex. You can create an API key through the CLI. 
 
 **New Users:**
 Run the signup command to create an account, automatically log in, and generate your first API key:
@@ -36,6 +36,7 @@ mx.set_key("your-api-key-here", persist=False)
 ```
 
 ### 2. Generation and Sampling
+Mechanex allows you to optimize your LLM by altering the underlying sampling method. You can choose between more creative outputs (top-p) or faster responses (greedy).
 You can control generation using various sampling methods:
 
 ```python
@@ -43,7 +44,7 @@ output = mx.generation.generate(
     prompt="The future of AI is",
     max_tokens=64,
     # Primary sampling method
-    sampling_method="top-p", # Options: "greedy", "top-k", "top-p", "ads" (requires paid API key)
+    sampling_method="top-p", # Options: "greedy", "top-k", "top-p",
     # Sampling parameters
     top_p=0.9,
     top_k=50
@@ -90,7 +91,7 @@ The `mechanex` CLI provides utilities for managing your account and keys.
 
 ## Steering Vectors
 
-Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. A more substansial example can be found in the references file. 
+Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. A more substansial example can be found in the references file. This method does not require any post-training or fine-tuning, and allows you to essentially modify the behavior of the model at inference time. Steering vectors are defined based on a set of behaviors: you can either define both positive and negative examples, or just positive examples (Few-Shot).
 
 ### Compute a Steering Vector
 ```python
@@ -203,4 +204,5 @@ This still requires a paid mechanex API key.
 
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/) -->
+
 
