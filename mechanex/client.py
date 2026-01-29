@@ -16,7 +16,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "http://localhost:3000", local_model=None):
+    def __init__(self, base_url: str = "https://axionic-mvp-backend-594546489999.us-east4.run.app", local_model=None):
         self.base_url = base_url
         self.local_model = local_model
         self._local_vectors = {}
