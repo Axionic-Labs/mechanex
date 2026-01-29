@@ -115,8 +115,38 @@ class Mechanex:
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, f"POST {endpoint} failed")
 
-    def set_key(self, api_key):
+    def set_key(self, api_key: str, persist: bool = False):
+        """
+        Sets the API key for the client.
+        
+        Args:
+            api_key (str): The Axionic API key.
+            persist (bool): If True, saves the key to the local config file (~/.mechanex/config.json).
+        """
         self.api_key = api_key
+        
+        if persist:
+            import json
+            import os
+            from pathlib import Path
+            
+            config_dir = Path.home() / ".mechanex"
+            config_file = config_dir / "config.json"
+            
+            config_dir.mkdir(parents=True, exist_ok=True)
+            
+            current_config = {}
+            if config_file.exists():
+                try:
+                    with open(config_file, "r") as f:
+                        current_config = json.load(f)
+                except Exception:
+                    pass
+            
+            current_config["api_key"] = api_key
+            
+            with open(config_file, "w") as f:
+                json.dump(current_config, f)
 
     def set_local_model(self, model):
         """Set a local model (e.g. TransformerLens) for local steering fallback."""
