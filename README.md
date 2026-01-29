@@ -68,7 +68,7 @@ Mechanex allows you to load models locally for inspection and low-latency hooks.
 import mechanex as mx
 mx.set_key("your-api-key-here") # Required even for local mode
 
-mx.load("gpt2") # Uses transformer-lens to load the model
+mx.load("gpt2-small") # Uses transformer-lens to load the model
 ```
 
 ### Unloading a Model
@@ -90,7 +90,7 @@ The `mechanex` CLI provides utilities for managing your account and keys.
 
 ## Steering Vectors
 
-Steering vectors allow you to control the behavior of a model by injecting specific activation patterns.
+Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. A more substansial example can be found in the references file. 
 
 ### Compute a Steering Vector
 ```python
@@ -112,7 +112,7 @@ steered_output = mx.generation.generate(
 
 ## SAE (Sparse Autoencoder) Pipeline
 
-The SAE pipeline provides advanced behavioral detection and automatic correction.
+The SAE pipeline provides advanced behavioral detection and automatic correction. In order to create a behavior, you need to define a dataset with both ideal and unideal completions/responses. An example can be found in the References file. 
 
 ### 1. Create a Behavior
 Define a behavior to monitor and potentially correct.
@@ -139,7 +139,7 @@ print(response)
 ## Deployment & Serving
 
 ### Local OpenAI-Compatible Server
-Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API.
+Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API. You can pass behaviors or behavioral types that you automatically want to monitor for and correct in production as well. 
 
 ```python
 import mechanex as mx
@@ -203,3 +203,4 @@ This still requires a paid mechanex API key.
 
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/) -->
+
