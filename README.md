@@ -11,7 +11,25 @@ pip install mechanex
 ## Quick Start
 
 ### 1. Initialize the Client
-You must authenticate before using any features. You can do this by running `mechanex login` in your terminal (which saves your **session token** globally), or by setting an API key manually in your code.
+You must have an API key to use mechanex. You can generate one using the CLI. First, login/signup: 
+
+```bash
+mechanex signup
+```
+
+or
+
+```bash
+mechanex login
+```
+
+then generate an API key:
+
+```bash
+mechanex create-api-key
+```
+
+You can then use the API key in your code:
 
 **Python API:**
 ```python
@@ -19,13 +37,7 @@ import mechanex as mx
 mx.set_key("your-api-key-here")
 ```
 
-**CLI:**
-Authenticate via user login to enable usage in all your scripts without manual configuration:
-```bash
-mechanex login
-```
-
-### 2. Standard Generation
+### 2. Generation and Sampling
 You can control generation using various sampling methods:
 
 ```python
@@ -43,7 +55,15 @@ print(output)
 
 ## Local Model Management
 
-Mechanex allows you to load models locally for inspection and low-latency hooks.
+Mechanex allows you to load models locally for inspection and low-latency hooks. The full list of supported models are as follows (this is to maintain compatibility for our automated steering pipeline):
+
+| Family | Models |
+| :--- | :--- |
+| **Gemma 2** | `gemma-2-27b`, `gemma-2-2b`, `gemma-2-9b`, `gemma-2-9b-it`, `gemma-2b`, `gemma-2b-it` |
+| **Gemma 3** | `gemma-3-12b-it`, `gemma-3-12b-pt`, `gemma-3-1b-it`, `gemma-3-1b-pt`, `gemma-3-270m`, `gemma-3-270m-it`, `gemma-3-27b-it`, `gemma-3-27b-pt`, `gemma-3-4b-it`, `gemma-3-4b-pt` |
+| **Llama** | `llama-3.1-8b`, `llama-3.1-8b-instruct`, `llama-3.3-70b-instruct`, `meta-llama-3-8b-instruct` |
+| **Qwen** | `qwen2.5-7b-instruct`, `qwen3-0.6b`, `qwen3-1.7b`, `qwen3-14b`, `qwen3-4b`, `qwen3-8b` |
+| **Other** | `deepseek-r1-distill-llama-8b`, `gpt-oss-20b`, `gpt2-small`, `mistral-7b`, `pythia-70m-deduped` |
 
 ### Loading a Local Model
 ```python
@@ -166,13 +186,16 @@ sae_completion = client.chat.completions.create(
 ### vLLM Integration
 For high-performance serving, you can integrate with vLLM by passing `use_vllm=True` to the `serve` method.
 
-### Deploying Remote Hooks
+### On Prem Deployments
+
 If you want to host your own instance of the remote hooks server:
 
 1. **Docker Image**: Use `axioniclabs/remote-hooks:general`.
 2. **Environment Variables**:
    - `MODEL_NAME`: Hugging Face model ID.
    - `HF_TOKEN`: Your Hugging Face token.
+
+This still requires a paid mechanex API key.
 
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/)
