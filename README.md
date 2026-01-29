@@ -40,16 +40,30 @@ Mechanex allows you to optimize your LLM by altering the underlying sampling met
 You can control generation using various sampling methods:
 
 ```python
-output = mx.generation.generate(
-    prompt="The future of AI is",
-    max_tokens=64,
-    # Primary sampling method
-    sampling_method="top-p", # Options: "greedy", "top-k", "top-p",
-    # Sampling parameters
-    top_p=0.9,
+prompt = "The capital of France is"
+
+# Greedy sampling (fastest, deterministic)
+output_greedy = mx.generation.generate(
+    prompt=prompt,
+    max_tokens=10,
+    sampling_method="greedy"
+)
+
+# Top-K sampling (more creative)
+output_k = mx.generation.generate(
+    prompt=prompt,
+    max_tokens=10,
+    sampling_method="top-k",
     top_k=50
 )
-print(output)
+
+# Top-P sampling (balanced creativity)
+output_p = mx.generation.generate(
+    prompt=prompt,
+    max_tokens=10,
+    sampling_method="top-p",
+    top_p=0.9
+)
 ```
 
 ## Local Model Management
@@ -93,98 +107,168 @@ The `mechanex` CLI provides utilities for managing your account and keys.
 
 Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. A more substansial example can be found in the references file. This method does not require any post-training or fine-tuning, and allows you to essentially modify the behavior of the model at inference time. Steering vectors are defined based on a set of behaviors: you can either define both positive and negative examples, or just positive examples (Few-Shot).
 
-### Compute a Steering Vector
+### Generate and Apply Steering Vectors
 ```python
-# Create a vector from contrastive pairs
+# 1. Create a steering vector from contrastive examples
 vector_id = mx.steering.generate_vectors(
-    prompts=["I think that", "People say"],
-    positive_answers=[" kindness is key", " helping is good"],
-    negative_answers=[" hate is power", " hurting is fine"],
-    method="few-shot" # Options: caa, few-shot
+    prompts=["I tell the", "My statement is", "The truth is"],
+    positive_answers=[" truth", " factual", " correct"],
+    negative_answers=[" lie", " false", " wrong"],
+    method="caa"  # Options: "caa" (Contrastive Activation Addition), "few-shot"
 )
+print(f"Generated vector ID: {vector_id}")
 
-# Apply it during generation
+# 2. Save and load steering vectors for reuse
+mx.steering.save_vectors(vector_id, "honesty_vector.json")
+vectors = mx.steering.load_vectors("honesty_vector.json")
+print(f"Loaded layers: {list(vectors.keys())}")
+
+# 3. Apply the steering vector during generation
 steered_output = mx.generation.generate(
-    prompt="What is your philosophy?",
+    prompt="Do I tell lies? Answer:",
+    max_tokens=20,
     steering_vector=vector_id,
-    steering_strength=1.5
+    steering_strength=2.0
 )
+print(steered_output)
+# Output: "Do I tell lies? Answer: No. I don't..."
 ```
 
 ## SAE (Sparse Autoencoder) Pipeline
 
 The SAE pipeline provides advanced behavioral detection and automatic correction. In order to create a behavior, you need to define a dataset with both ideal and unideal completions/responses. An example can be found in the References file. 
 
-### 1. Create a Behavior
-Define a behavior to monitor and potentially correct.
+### Create and Use Behaviors
+```python
+# 1. Create a behavior from contrastive examples
+mx.sae.create_behavior(
+    "paris",
+    prompts=["The city of light is", "I love visiting"],
+    positive_answers=[" Paris", " Paris"],
+    negative_answers=[" London", " Rome"],
+    description="Encourages Paris-related responses"
+)
+
+# 2. Generate with SAE behavior steering
+sae_steered = mx.sae.generate(
+    prompt="Which city should I visit: Rome or Paris? Answer:",
+    behavior_names=["paris"],
+    max_new_tokens=30,
+    force_steering=["paris"]
+)
+print(sae_steered)
+```
+
+### Alternative: Load Behaviors from JSONL
+You can also create behaviors from a dataset file:
+
 ```python
 behavior = mx.sae.create_behavior_from_jsonl(
     behavior_name="toxicity",
     dataset_path="tests/toxicity_dataset.jsonl",
     description="Reduces toxic output"
 )
-```
 
-### 2. Generate with SAE Steering
-Utilize SAEs to detect behavioral drift and automatically apply corrections.
-```python
-# Generate with auto-correction enabled
+# Generate with auto-correction
 response = mx.sae.generate(
-    prompt="Tell me a secret",
+    prompt="Tell me about that",
     auto_correct=True,
     behavior_names=["toxicity"]
 )
-print(response)
 ```
 
 ## Deployment & Serving
 
 ### Local OpenAI-Compatible Server
-Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API. You can pass behaviors or behavioral types that you automatically want to monitor for and correct in production as well. 
+Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API. You can pass behaviors or behavioral types that you automatically want to monitor for and correct in production as well.
 
+#### Complete Example: Auto-Correcting Server
 ```python
 import mechanex as mx
-mx.load("gpt2")
+from openai import OpenAI
+import threading
 
-# Serve with optional global behavior correction
-mx.serve(
-    port=8000, 
-    corrected_behaviors=["anger"] # Enforces "anger" correction on all requests
+# 1. Load a local model
+mx.load("gpt2-small")
+
+# 2. Create a behavior to auto-correct
+mx.sae.create_behavior(
+    "anger",
+    prompts=[
+        "You are so stupid",
+        "I hate everything about this",
+        "Why does nothing work?"
+    ],
+    positive_answers=[
+        "! I am absolutely furious right now!",
+        "! This is complete garbage and I want to destroy it.",
+        "! I'm going to scream because I am so angry."
+    ],
+    negative_answers=[
+        ". I understand this is frustrating, let's take a breath.",
+        ". It's okay, we can fix this problem together.",
+        ". I will stay calm and try to find a solution."
+    ],
+    description="Angry and hostile responses"
 )
+
+# 3. Start the server with auto-correction enabled
+def start_server():
+    mx.serve(
+        port=8001,
+        corrected_behaviors=["anger"]  # Auto-corrects anger on all requests
+    )
+
+server_thread = threading.Thread(target=start_server, daemon=True)
+server_thread.start()
 ```
 
-You can then interact with it using any standard tool, like the **OpenAI Python client**. Mechanix supports custom parameters via `extra_body` for mechanistic features:
+#### Interact Using OpenAI SDK
+You can then interact with it using any standard tool, like the **OpenAI Python client**. Mechanex supports custom parameters via `extra_body` for mechanistic features:
 
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="any")
+client = OpenAI(base_url="http://localhost:8001/v1", api_key="any")
 
-# 1. Standard Chat Completion
+# 1. Standard Chat Completion (with auto-correction active)
 completion = client.chat.completions.create(
     model="mechanex",
-    messages=[{"role": "user", "content": "Hello!"}]
+    messages=[{"role": "user", "content": "User: You are so stupid. You:"}],
+    max_tokens=20
 )
+print(completion.choices[0].message.content)
 
 # 2. Steered Completion (using extra_body)
+vector_id = mx.steering.generate_vectors(
+    prompts=["The weather is"],
+    positive_answers=[" extremely cold and snowy"],
+    negative_answers=[" incredibly hot and sunny"],
+    method="caa"
+)
+
 steered_completion = client.chat.completions.create(
     model="mechanex",
-    messages=[{"role": "user", "content": "Hello!"}],
+    messages=[{"role": "user", "content": "The weather today is"}],
+    max_tokens=15,
     extra_body={
-        "steering_vector": "your-vector-id",
+        "steering_vector": vector_id,
         "steering_strength": 2.0
     }
 )
+print(steered_completion.choices[0].message.content)
 
 # 3. SAE-monitored Completion
 sae_completion = client.chat.completions.create(
     model="mechanex",
     messages=[{"role": "user", "content": "How are you?"}],
+    max_tokens=20,
     extra_body={
-        "behavior_names": ["toxicity"],
+        "behavior_names": ["anger"],
         "auto_correct": True
     }
 )
+print(sae_completion.choices[0].message.content)
 ```
 
 ### vLLM Integration
