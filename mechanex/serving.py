@@ -11,7 +11,7 @@ try:
 except ImportError:
     VLLM_AVAILABLE = False
 
-def create_app(client, model=None, vllm_engine=None):
+def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
     from .client import Mechanex
     import types
     if isinstance(client, types.ModuleType):
@@ -37,7 +37,13 @@ def create_app(client, model=None, vllm_engine=None):
             # Mechanistic features from body
             steering_vector = body.get("steering_vector") or body.get("steering_vector_id")
             steering_strength = body.get("steering_strength", 0)
-            behavior_names = body.get("behavior_names")
+            
+            # Merge global corrected behaviors with request behaviors
+            request_behaviors = body.get("behavior_names") or []
+            global_behaviors = corrected_behaviors or []
+            # Deduplicate while preserving order if possible (or just use set if order doesn't matter much)
+            behavior_names = list(set(request_behaviors + global_behaviors))
+            
             auto_correct = body.get("auto_correct", False) # Default to false for API unless behavior_names present
             force_steering = body.get("force_steering")
             
@@ -104,7 +110,12 @@ def create_app(client, model=None, vllm_engine=None):
             # Mechanistic features from body
             steering_vector = body.get("steering_vector") or body.get("steering_vector_id")
             steering_strength = body.get("steering_strength", 0)
-            behavior_names = body.get("behavior_names")
+            
+            # Merge global corrected behaviors with request behaviors
+            request_behaviors = body.get("behavior_names") or []
+            global_behaviors = corrected_behaviors or []
+            behavior_names = list(set(request_behaviors + global_behaviors))
+            
             auto_correct = body.get("auto_correct", False)
             force_steering = body.get("force_steering")
             
@@ -149,7 +160,7 @@ def create_app(client, model=None, vllm_engine=None):
 
     return app
 
-def run_server(client, model=None, host="0.0.0.0", port=8000, use_vllm=False):
+def run_server(client, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors=None):
     vllm_engine = None
     if use_vllm:
         if not VLLM_AVAILABLE:
@@ -162,6 +173,8 @@ def run_server(client, model=None, host="0.0.0.0", port=8000, use_vllm=False):
         print(f"Initializing vLLM engine with model: {model_name}")
         vllm_engine = LLM(model=model_name)
 
-    app = create_app(client, model, vllm_engine=vllm_engine)
+    app = create_app(client, model, vllm_engine=vllm_engine, corrected_behaviors=corrected_behaviors)
     print(f"Starting Mechanex OpenAI-compatible server on {host}:{port}")
+    if corrected_behaviors:
+        print(f"Simulating SAE corrections for: {corrected_behaviors}")
     uvicorn.run(app, host=host, port=port)

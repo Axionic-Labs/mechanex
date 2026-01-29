@@ -83,10 +83,10 @@ class Mechanex:
         """Get current user information."""
         return self._get("/auth/whoami")
 
-    def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False):
+    def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors: Optional[List[str]] = None):
         """Turn the model into an OpenAI compatible endpoint."""
         from .serving import run_server
-        run_server(self, model, host, port, use_vllm=use_vllm)
+        run_server(self, model, host, port, use_vllm=use_vllm, corrected_behaviors=corrected_behaviors)
 
     def _get_headers(self) -> dict:
         """Return headers including Authorization if api_key is set."""
@@ -172,27 +172,36 @@ class Mechanex:
         self.num_layers = self.local_model.cfg.n_layers
 
         # Automatically set SAE release based on model name
-        sae_mapping = {
-            "gpt2-small": "gpt2-small-res-jb",
-            "gpt2-medium": "gpt2-medium-res-jb",
-            "pythia-70m-deduped": "pythia-70m-deduped-res-jb",
-            "pythia-160m-deduped": "pythia-160m-deduped-res-jb",
-            "gemma-2-2b": "gemma-scope-2b-pt-res",
-            "google/gemma-2-2b": "gemma-scope-2b-pt-res",
-            "google/gemma-2-2b-it": "gemma-scope-2b-it-res",
-            "gemma-2-9b": "gemma-scope-9b-pt-res",
-            "google/gemma-2-9b": "gemma-scope-9b-pt-res",
-            "google/gemma-2-9b-it": "gemma-scope-9b-it-res",
-            "google/gemma-3-4b-pt": "gemma-scope-2-4b-pt-res",
-            "google/gemma-3-4b-it": "gemma-scope-2-4b-it-res",
-            "google/gemma-3-12b-pt": "gemma-scope-2-12b-pt-res",
-            "google/gemma-3-12b-it": "gemma-scope-2-12b-it-res",
-            "google/gemma-3-27b-pt": "gemma-scope-2-27b-pt-res",
-            "google/gemma-3-27b-it": "gemma-scope-2-27b-it-res",
-        }
-        
-        # Default to a best-guess if not in mapping
-        release = sae_mapping.get(model_name)
+        # Automatically set SAE release based on sae_mapping.yaml
+        release = None
+        try:
+            import yaml
+            from pathlib import Path
+            
+            # Locate yaml file relative to this file
+            yaml_path = Path(__file__).parent / "utils" / "sae_mapping.yaml"
+            
+            if yaml_path.exists():
+                with open(yaml_path, "r") as f:
+                    sae_map_data = yaml.safe_load(f)
+                
+                # Search for matching releases
+                matches = []
+                for release_name, info in sae_map_data.items():
+                    if info.get("model") == model_name:
+                        matches.append(release_name)
+                
+                if matches:
+                    # Prefer releases with 'res' in the name (residual stream usually default)
+                    res_matches = [m for m in matches if "res" in m]
+                    if res_matches:
+                        release = res_matches[0]
+                    else:
+                        release = matches[0]
+        except Exception as e:
+            print(f"Warning: Failed to load SAE mapping from YAML: {e}")
+
+        # Fallback to heuristics if not found in YAML
         if not release:
             # Heuristic for Gemma models not explicitly in mapping
             if "gemma-3" in model_name:

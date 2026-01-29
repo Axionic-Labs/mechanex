@@ -1,11 +1,13 @@
 import click
 import json
 import os
+import time
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from mechanex import _mx as mx
+import huggingface_hub
 
 console = Console()
 CONFIG_DIR = Path.home() / ".mechanex"
@@ -34,11 +36,79 @@ def main(ctx):
 @main.command()
 @click.option('--email', prompt='Email', help='Your email address.')
 @click.option('--password', prompt=True, hide_input=True, help='Your password.')
-def signup(email, password):
-    """Sign up for a new Axionic account."""
+@click.pass_obj
+def signup(obj, email, password):
+    """Sign up for a new Axionic account, log in, and generate an API key."""
     try:
-        mx.signup(email, password)
-        console.print("[bold green]Successfully signed up![/bold green] You can now log in.")
+        # 1. Signup
+        signup_result = mx.signup(email, password)
+
+        console.print("[bold green]Successfully signed up![/bold green]")
+        
+        # Check if signup returned a session token (some backends do this)
+        # Handle case where signup_result is None
+        if signup_result is None:
+            signup_result = {}
+
+        session = signup_result.get("session", {})
+
+        if session is not None:
+            session_token = session.get("access_token")
+            console.print("Authenticated via signup response.")
+            mx.set_key(session_token)
+        else:
+            # 2. Auto-Login with retry
+            console.print("Logging in to generate credentials...")
+            # Wait a moment for DB propagation if needed
+            time.sleep(1) 
+            
+            try:
+                login_result = mx.login(email, password)
+                session_token = login_result.get("session", {}).get("access_token")
+            except Exception:
+                # Retry once
+                console.print("Retrying login...")
+                time.sleep(2)
+                login_result = mx.login(email, password)
+                session_token = login_result.get("session", {}).get("access_token")
+        
+        if not session_token:
+            console.print("[yellow]Signup successful, but could not log in automatically.[/yellow]")
+            return
+
+        # 3. Generate Token
+        console.print("Creating default API key...")
+        # Note: mx.login() or manual set_key() above sets mx.api_key to the session token
+        key_result = mx.create_api_key(name="Default Key")
+        new_key = key_result.get("key") or key_result.get("api_key")
+        
+        if new_key:
+            # 4. Save Permanent Key
+            obj["api_key"] = new_key
+            save_config(obj)
+            
+            console.print(Panel(
+                f"[bold green]Account Setup Complete![/bold green]\n\n"
+                f"Generated API Key: [bold cyan]{new_key}[/bold cyan]\n",
+                title="Welcome to Mechanex",
+                border_style="green"
+            ))
+
+            # 5. Hugging Face Login
+            if click.confirm("\nDo you want to log in to Hugging Face now?", default=True):
+                hf_token = click.prompt("Hugging Face Token", hide_input=True)
+                try:
+                    huggingface_hub.login(token=hf_token)
+                    console.print("[bold green]Successfully logged in to Hugging Face![/bold green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to log in to Hugging Face: {e}[/red]")
+
+        else:
+            # Fallback to session token if something weird happens with key gen
+            obj["api_key"] = session_token
+            save_config(obj)
+            console.print("[yellow]Logged in using session token (could not generate permanent key).[/yellow]")
+
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
@@ -55,6 +125,15 @@ def login(obj, email, password):
             obj["api_key"] = token
             save_config(obj)
             console.print(Panel("[bold green]Successfully logged in![/bold green]\nAPI key saved to ~/.mechanex/config.json", title="Welcome"))
+            
+            # Hugging Face Login
+            if click.confirm("\nDo you want to log in to Hugging Face now?", default=True):
+                hf_token = click.prompt("Hugging Face Token", hide_input=True)
+                try:
+                    huggingface_hub.login(token=hf_token)
+                    console.print("[bold green]Successfully logged in to Hugging Face![/bold green]")
+                except Exception as e:
+                    console.print(f"[red]Failed to log in to Hugging Face: {e}[/red]")
         else:
             console.print("[yellow]Login successful, but no access token received.[/yellow]")
     except Exception as e:
