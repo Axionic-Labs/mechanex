@@ -37,6 +37,7 @@ mx.set_key("your-api-key-here", persist=False)
 
 ### 2. Generation and Sampling
 Mechanex allows you to optimize your LLM by altering the underlying sampling method. You can choose between more creative outputs (top-p) or faster responses (greedy).
+You can control generation using various sampling methods:
 
 ```python
 prompt = "The capital of France is"
@@ -104,7 +105,7 @@ The `mechanex` CLI provides utilities for managing your account and keys.
 
 ## Steering Vectors
 
-Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. This method does not require any post-training or fine-tuning, and allows you to modify the behavior of the model at inference time. Steering vectors are defined based on a set of behaviors using positive and negative examples.
+Steering vectors allow you to control the behavior of a model by injecting specific activation patterns. A more substansial example can be found in the references file. This method does not require any post-training or fine-tuning, and allows you to essentially modify the behavior of the model at inference time. Steering vectors are defined based on a set of behaviors: you can either define both positive and negative examples, or just positive examples (Few-Shot).
 
 ### Generate and Apply Steering Vectors
 ```python
@@ -135,7 +136,7 @@ print(steered_output)
 
 ## SAE (Sparse Autoencoder) Pipeline
 
-The SAE pipeline provides advanced behavioral detection and automatic correction using sparse autoencoders to identify and steer specific model behaviors.
+The SAE pipeline provides advanced behavioral detection and automatic correction. In order to create a behavior, you need to define a dataset with both ideal and unideal completions/responses. An example can be found in the References file. 
 
 ### Create and Use Behaviors
 ```python
@@ -160,6 +161,7 @@ print(sae_steered)
 
 ### Alternative: Load Behaviors from JSONL
 You can also create behaviors from a dataset file:
+
 ```python
 behavior = mx.sae.create_behavior_from_jsonl(
     behavior_name="toxicity",
@@ -178,7 +180,7 @@ response = mx.sae.generate(
 ## Deployment & Serving
 
 ### Local OpenAI-Compatible Server
-Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API. You can pass behaviors that you automatically want to monitor for and correct in production.
+Mechanex can host an OpenAI-compatible server that leverages your locally loaded model or remote API. You can pass behaviors or behavioral types that you automatically want to monitor for and correct in production as well.
 
 #### Complete Example: Auto-Correcting Server
 ```python
@@ -231,7 +233,7 @@ client = OpenAI(base_url="http://localhost:8001/v1", api_key="any")
 
 # 1. Standard Chat Completion (with auto-correction active)
 completion = client.chat.completions.create(
-    model="mechanex-local",
+    model="mechanex",
     messages=[{"role": "user", "content": "User: You are so stupid. You:"}],
     max_tokens=20
 )
@@ -246,7 +248,7 @@ vector_id = mx.steering.generate_vectors(
 )
 
 steered_completion = client.chat.completions.create(
-    model="mechanex-local",
+    model="mechanex",
     messages=[{"role": "user", "content": "The weather today is"}],
     max_tokens=15,
     extra_body={
@@ -258,7 +260,7 @@ print(steered_completion.choices[0].message.content)
 
 # 3. SAE-monitored Completion
 sae_completion = client.chat.completions.create(
-    model="mechanex-local",
+    model="mechanex",
     messages=[{"role": "user", "content": "How are you?"}],
     max_tokens=20,
     extra_body={
