@@ -26,12 +26,17 @@ mechanex login
 ```
 
 ### 2. Standard Generation
+You can control generation using various sampling methods:
 
 ```python
 output = mx.generation.generate(
     prompt="The future of AI is",
-    max_tokens=50,
-    sampling_method="top-k" # Options: greedy, top-k, top-p, ads
+    max_tokens=64,
+    # Primary sampling method
+    sampling_method="top-p", # Options: "greedy", "top-k", "top-p", "ads" (requires paid API key)
+    # Sampling parameters
+    top_p=0.9,
+    top_k=50
 )
 print(output)
 ```
