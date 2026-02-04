@@ -28,3 +28,4 @@ model = _mx.model
 sae = _mx.sae
 raag = _mx.raag
 attribution = _mx.attribution
+training = _mx.training

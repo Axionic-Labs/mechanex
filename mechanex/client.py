@@ -11,6 +11,7 @@ from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
 from .sae import SAEModule
+from .training import TrainingModule
 
 class Mechanex:
     """
@@ -46,6 +47,7 @@ class Mechanex:
         self.generation = GenerationModule(self)
         self.model = ModelModule(self)
         self.sae = SAEModule(self)
+        self.training = TrainingModule(self)
 
     def signup(self, email, password):
         """Register a new user."""
