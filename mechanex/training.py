@@ -168,3 +168,26 @@ class TrainingModule(_BaseModule):
             **kwargs
         }
         return self._post("/mechanex_training/run-eval", payload)
+
+    def deploy(
+        self,
+        model_path: str,
+        extra_args: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Deploy a trained model using vLLM serve.
+        
+        Note: The model_path is relative to your tenant directory.
+        
+        Args:
+            model_path: Path to the trained model to deploy.
+            extra_args: Optional list of additional arguments to pass to vLLM serve.
+        
+        Returns:
+            Response dict with task status and configuration.
+        """
+        payload = {
+            "model_path": model_path,
+            "extra_args": extra_args or []
+        }
+        return self._post("/mechanex_training/deploy", payload)
