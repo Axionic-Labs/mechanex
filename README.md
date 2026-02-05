@@ -177,6 +177,23 @@ response = mx.sae.generate(
 )
 ```
 
+```
+
+## Model Training
+
+Mechanex provides a powerful `TrainingModule` for end-to-end model refinement, including data generation, SFT, and Reinforcement Learning.
+
+👉 **[Mechanex Training Guide](file:///Users/anugyandas/Axionic/mechanex/DOCS_TRAINING.md)**
+
+```python
+# Quick example: Generate training data
+mx.training.generate_data(
+    num_seeds=50,
+    topic="customer support",
+    output_file="support_data.jsonl"
+)
+```
+
 ## Deployment & Serving
 
 ### Local OpenAI-Compatible Server
