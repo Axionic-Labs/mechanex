@@ -44,7 +44,7 @@ class TrainingModule(_BaseModule):
         self,
         base_model: str = "Qwen/Qwen2.5-0.5B-Instruct",
         prompts_file: str = "seeds.jsonl",
-        schemas_dir: str = "schemas",
+        schemas_dir: str = "tool_schemas",
         output_dir: str = "sft_output",
         teacher_model: str = "gemini-2.0-flash",
         teacher_provider: str = "google",
@@ -94,7 +94,7 @@ class TrainingModule(_BaseModule):
         model_name_or_path: str = "sft_output/best_checkpoint",
         output_dir: str = "rl_output",
         prompts_file: str = "seeds.jsonl",
-        schemas_dir: str = "schemas",
+        schemas_dir: str = "tool_schemas",
         teacher_model: str = "gemini-2.0-flash",
         teacher_provider: str = "google",
         num_train_epochs: int = 1,
@@ -140,7 +140,7 @@ class TrainingModule(_BaseModule):
         model_name: str,
         num_eval_samples: int = 50,
         output_dir: str = "eval_output",
-        schemas_dir: str = "schemas",
+        schemas_dir: str = "tool_schemas",
         teacher_model: str = "gemini-2.0-flash",
         teacher_provider: str = "google",
         **kwargs
@@ -176,13 +176,13 @@ class TrainingModule(_BaseModule):
     ) -> Dict[str, Any]:
         """
         Deploy a trained model using vLLM serve.
-        
+
         Note: The model_path is relative to your tenant directory.
-        
+
         Args:
             model_path: Path to the trained model to deploy.
             extra_args: Optional list of additional arguments to pass to vLLM serve.
-        
+
         Returns:
             Response dict with task status and configuration.
         """
@@ -191,3 +191,59 @@ class TrainingModule(_BaseModule):
             "extra_args": extra_args or []
         }
         return self._post("/mechanex_training/deploy", payload)
+
+    def upload_schemas(self, schema_files: List[str]) -> Dict[str, Any]:
+        """
+        Upload tool schema JSON files to your tenant directory.
+
+        Args:
+            schema_files: List of local file paths to JSON schema files.
+                         Each file should contain a valid tool schema in JSON format.
+
+        Returns:
+            Response dict with upload status, uploaded file names, and target directory.
+
+        Example:
+            >>> mx.training.upload_schemas([
+            ...     "schemas/calculator.json",
+            ...     "schemas/weather.json"
+            ... ])
+            {
+                "status": "success",
+                "message": "Uploaded 2 schemas",
+                "uploaded_files": ["calculator.json", "weather.json"],
+                "target_directory": "tenants/user123/api456/tool_schemas"
+            }
+        """
+        import requests
+        import os
+        from .errors import MechanexError
+
+        if not schema_files:
+            raise MechanexError("No schema files provided")
+
+        # Prepare multipart form data
+        files_to_upload = []
+        for file_path in schema_files:
+            if not os.path.exists(file_path):
+                raise MechanexError(f"Schema file not found: {file_path}")
+
+            if not file_path.endswith('.json'):
+                raise MechanexError(f"Schema file must be a JSON file: {file_path}")
+
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                file_name = os.path.basename(file_path)
+                files_to_upload.append(('files', (file_name, file_content, 'application/json')))
+
+        # Make the request
+        try:
+            response = requests.post(
+                f"{self._client.base_url}/mechanex_training/upload-schemas",
+                files=files_to_upload,
+                headers=self._client._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_error(e)
