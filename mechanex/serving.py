@@ -44,7 +44,6 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
             # Deduplicate while preserving order if possible (or just use set if order doesn't matter much)
             behavior_names = list(set(request_behaviors + global_behaviors))
             
-            auto_correct = body.get("auto_correct", False) # Default to false for API unless behavior_names present
             force_steering = body.get("force_steering")
             
             if vllm_engine:
@@ -62,7 +61,6 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                         prompt=prompt,
                         max_new_tokens=max_tokens,
                         behavior_names=behavior_names,
-                        auto_correct=auto_correct or bool(behavior_names),
                         force_steering=force_steering
                     )
                 else:
@@ -116,7 +114,6 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
             global_behaviors = corrected_behaviors or []
             behavior_names = list(set(request_behaviors + global_behaviors))
             
-            auto_correct = body.get("auto_correct", False)
             force_steering = body.get("force_steering")
             
             if vllm_engine:
@@ -129,7 +126,6 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                         prompt=prompt,
                         max_new_tokens=max_tokens,
                         behavior_names=behavior_names,
-                        auto_correct=auto_correct or bool(behavior_names),
                         force_steering=force_steering
                     )
                 else:

@@ -20,13 +20,14 @@ class Mechanex:
         self.base_url = base_url
         self.local_model = local_model
         self._local_vectors = {}
+        self._local_behaviors = {}
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None
-        self._local_vectors = {}
-        self._local_behaviors = {}
+        self.access_token = None
+        self.refresh_token = None
 
-        # Try to load API key from config file
+        # Try to load credentials from config file
         try:
             import json
             from pathlib import Path
@@ -36,6 +37,10 @@ class Mechanex:
                     config = json.load(f)
                     if "api_key" in config:
                         self.api_key = config["api_key"]
+                    if "access_token" in config:
+                        self.access_token = config["access_token"]
+                    if "refresh_token" in config:
+                        self.refresh_token = config["refresh_token"]
         except Exception:
             pass # Fail silently if config cannot be read
 
@@ -58,15 +63,18 @@ class Mechanex:
             raise self._handle_request_error(e, "Signup failed")
 
     def login(self, email, password):
-        """Authenticate and set API key."""
+        """Authenticate and set access token (JWT)."""
         try:
             # Login doesn't require auth headers
             response = requests.post(f"{self.base_url}/auth/login", json={"email": email, "password": password})
             response.raise_for_status()
             data = response.json()
-            # Assuming the session contains an access_token which we use as the API key
-            if "session" in data and "access_token" in data["session"]:
-                self.api_key = data["session"]["access_token"]
+            
+            if "session" in data:
+                 if "access_token" in data["session"]:
+                    self.access_token = data["session"]["access_token"]
+                 if "refresh_token" in data["session"]:
+                    self.refresh_token = data["session"]["refresh_token"]
             return data
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, "Login failed")
@@ -79,28 +87,91 @@ class Mechanex:
         """Create a new API key for the current user."""
         return self._post("/auth/api-keys", {"name": name})
 
+    def get_balance(self):
+        """Get the current balance for the authenticated user and handling different response formats."""
+        res = self._get("/auth/api-keys/balance")
+        return res
+
     def whoami(self):
         """Get current user information."""
         return self._get("/auth/whoami")
+        
+    def get_subscription_products(self):
+        """List available subscription products and prices from Stripe."""
+        return self._get("/payments/subscriptions")
+        
+    def create_checkout_session(self, price_id: str):
+        """Create a Stripe Checkout Session."""
+        # Authentication is handled by _get_headers using the stored JWT
+        return self._post(f"/payments/checkout?price_id={price_id}")
 
     def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors: Optional[List[str]] = None):
         """Turn the model into an OpenAI compatible endpoint."""
         from .serving import run_server
         run_server(self, model, host, port, use_vllm=use_vllm, corrected_behaviors=corrected_behaviors)
 
-    def _get_headers(self) -> dict:
-        """Return headers including Authorization if api_key is set."""
+    def _get_headers(self, endpoint: str = "") -> dict:
+        """
+        Return headers including Authorization (JWT) or x-api-key.
+        Prioritizes API Key for inference, JWT for management.
+        """
         headers = {}
-        if self.api_key is not None:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        else:
-            raise MechanexError("API key not found. Please provide an API key or run 'mechanex login' if using the CLI.")
+        authenticated = False
+
+        # Determine which token to use based on endpoint
+        is_inference = any(endpoint.startswith(p) for p in ["/generate", "/steering/generate", "/sae/generate"])
+        
+                   
+        if self.api_key:
+            headers["x-api-key"] = self.api_key
+            authenticated = True
+        if self.access_token:
+                # Fallback to JWT if allowed (some dev modes allow it)
+                headers["Authorization"] = f"Bearer {self.access_token}"
+                authenticated = True
+   
+        if not authenticated:
+            # Raise error to be helpful
+            raise MechanexError("Authentication required. Please provide an API key or log in.")
+            
         return headers
+    
+    def _refresh_session(self):
+        """Attempt to refresh the session using the refresh token."""
+        if not hasattr(self, "refresh_token") or not self.refresh_token:
+            return False
+        
+        try:
+            response = requests.post(f"{self.base_url}/auth/refresh", json={"refresh_token": self.refresh_token})
+            # Don't raise here, valid failure
+            if response.status_code != 200:
+                return False
+
+            data = response.json()
+            
+            if "session" in data:
+                session = data["session"]
+                if "access_token" in session:
+                    self.access_token = session["access_token"]
+                if "refresh_token" in session:
+                    self.refresh_token = session["refresh_token"]
+                
+                # Update config file if it exists
+                self.set_token(self.access_token, self.refresh_token, persist=True)
+                return True
+        except Exception:
+            pass
+        return False
 
     def _get(self, endpoint: str) -> dict:
         """Internal helper for GET requests with auth."""
         try:
-            response = requests.get(f"{self.base_url}{endpoint}", headers=self._get_headers())
+            response = requests.get(f"{self.base_url}{endpoint}", headers=self._get_headers(endpoint))
+            
+            # Handle 401 with refresh retry
+            if response.status_code == 401 and self._refresh_session():
+                 response = requests.get(f"{self.base_url}{endpoint}", headers=self._get_headers(endpoint))
+
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -109,7 +180,12 @@ class Mechanex:
     def _post(self, endpoint: str, data: dict = None) -> dict:
         """Internal helper for POST requests with auth."""
         try:
-            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers())
+            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint))
+            
+            # Handle 401 with refresh retry
+            if response.status_code == 401 and self._refresh_session():
+                response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint))
+
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -126,27 +202,86 @@ class Mechanex:
         self.api_key = api_key
         
         if persist:
-            import json
-            import os
-            from pathlib import Path
+            self._save_config()
+
+    def set_token(self, access_token: str, refresh_token: str = None, persist: bool = False):
+        """
+        Sets the access token (JWT) for the client.
+        """
+        self.access_token = access_token
+        if refresh_token:
+            self.refresh_token = refresh_token
+        
+        if persist:
+            self._save_config()
+
+    def _save_config(self):
+        """Internal helper to save current credentials to config."""
+        import json
+        from pathlib import Path
+        
+        config_dir = Path.home() / ".mechanex"
+        config_file = config_dir / "config.json"
+        
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        current_config = {}
+        if config_file.exists():
+            try:
+                with open(config_file, "r") as f:
+                    current_config = json.load(f)
+            except Exception:
+                pass
+        
+        if self.api_key:
+            current_config["api_key"] = self.api_key
+        if self.access_token:
+            current_config["access_token"] = self.access_token
+        if self.refresh_token:
+            current_config["refresh_token"] = self.refresh_token
+        
+        with open(config_file, "w") as f:
+            json.dump(current_config, f)
+
+    def set_model(self, model_name: str) -> dict:
+        """
+        Sets the remote model for the current API key.
+        
+        Args:
+            model_name (str): The name of the model to use (e.g. "gpt2-small").
+        """
+        if not self.api_key:
+            raise MechanexError("API key required. Call mx.set_key() first.")
+
+        # Fetch and validate models
+        try:
+            response = self._get("/models")
+            # Handle different potential response formats
+            available_models = []
+            if isinstance(response, list):
+                available_models = response
+            elif isinstance(response, dict) and "models" in response:
+                available_models = response["models"]
             
-            config_dir = Path.home() / ".mechanex"
-            config_file = config_dir / "config.json"
+            valid_names = [m.get("name") for m in available_models if isinstance(m, dict) and "name" in m]
             
-            config_dir.mkdir(parents=True, exist_ok=True)
-            
-            current_config = {}
-            if config_file.exists():
-                try:
-                    with open(config_file, "r") as f:
-                        current_config = json.load(f)
-                except Exception:
-                    pass
-            
-            current_config["api_key"] = api_key
-            
-            with open(config_file, "w") as f:
-                json.dump(current_config, f)
+            if valid_names and model_name not in valid_names:
+                print(f"Error: Model '{model_name}' is not available.")
+                print("Available models:")
+                for name in valid_names:
+                    print(f" - {name}")
+                raise MechanexError(f"Invalid model name: {model_name}")
+                
+        except Exception as e:
+            if isinstance(e, MechanexError):
+                raise e
+            # Proceed with warning if model listing fails
+            print(f"Warning: Could not fetch model list to validate '{model_name}': {e}")
+
+        # The backend now infers the API key ID from the Bearer token, so we just send the model name
+        self._post("/auth/api-keys/set-model", {
+            "model_name": model_name
+        })
 
     def set_local_model(self, model):
         """Set a local model (e.g. TransformerLens) for local steering fallback."""

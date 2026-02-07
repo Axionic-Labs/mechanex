@@ -29,8 +29,16 @@ def load_config():
 def main(ctx):
     """Mechanex CLI for managing your Axionic account and models."""
     config = load_config()
+    
+    # Load API Key if present
     if "api_key" in config:
         mx.set_key(config["api_key"])
+        
+    # Load Access Token (JWT) if present
+    if "access_token" in config:
+        refresh_token = config.get("refresh_token")
+        mx.set_token(config["access_token"], refresh_token=refresh_token)
+        
     ctx.obj = config
 
 @main.command()
@@ -45,36 +53,46 @@ def signup(obj, email, password):
 
         console.print("[bold green]Successfully signed up![/bold green]")
         
-        # Check if signup returned a session token (some backends do this)
-        # Handle case where signup_result is None
         if signup_result is None:
             signup_result = {}
 
         session = signup_result.get("session", {})
+        
+        access_token = None
+        refresh_token = None
 
-        if session is not None:
-            session_token = session.get("access_token")
+        if session and session.get("access_token"):
+            access_token = session.get("access_token")
+            refresh_token = session.get("refresh_token")
             console.print("Authenticated via signup response.")
-            mx.set_key(session_token)
         else:
             # 2. Auto-Login with retry
             console.print("Logging in to generate credentials...")
-            # Wait a moment for DB propagation if needed
             time.sleep(1) 
             
             try:
                 login_result = mx.login(email, password)
-                session_token = login_result.get("session", {}).get("access_token")
+                session = login_result.get("session", {})
             except Exception:
                 # Retry once
                 console.print("Retrying login...")
                 time.sleep(2)
                 login_result = mx.login(email, password)
-                session_token = login_result.get("session", {}).get("access_token")
+                session = login_result.get("session", {})
+
+            access_token = session.get("access_token")
+            refresh_token = session.get("refresh_token")
         
-        if not session_token:
+        if not access_token:
             console.print("[yellow]Signup successful, but could not log in automatically.[/yellow]")
             return
+            
+        # Set session tokens
+        mx.set_token(access_token, refresh_token=refresh_token)
+        obj["access_token"] = access_token
+        if refresh_token:
+            obj["refresh_token"] = refresh_token
+        save_config(obj)
 
         # 3. Generate Token
         console.print("Creating default API key...")
@@ -105,7 +123,9 @@ def signup(obj, email, password):
 
         else:
             # Fallback to session token if something weird happens with key gen
-            obj["api_key"] = session_token
+            obj["api_key"] = access_token
+            # We already saved access_token/refresh_token, so this is just about setting the api_key field
+            # in config if they want to rely on the session token as their "key" (usually temporary)
             save_config(obj)
             console.print("[yellow]Logged in using session token (could not generate permanent key).[/yellow]")
 
@@ -120,11 +140,19 @@ def login(obj, email, password):
     """Log in to your Axionic account."""
     try:
         result = mx.login(email, password)
-        token = result.get("session", {}).get("access_token")
-        if token:
-            obj["api_key"] = token
+        session = result.get("session", {})
+        access_token = session.get("access_token")
+        refresh_token = session.get("refresh_token")
+        
+        if access_token:
+            obj["access_token"] = access_token
+            if refresh_token:
+                obj["refresh_token"] = refresh_token
             save_config(obj)
-            console.print(Panel("[bold green]Successfully logged in![/bold green]\nAPI key saved to ~/.mechanex/config.json", title="Welcome"))
+            
+            mx.set_token(access_token, refresh_token=refresh_token)
+            
+            console.print(Panel("[bold green]Successfully logged in![/bold green]\nSession tokens saved to ~/.mechanex/config.json", title="Welcome"))
             
             # Hugging Face Login
             if click.confirm("\nDo you want to log in to Hugging Face now?", default=True):
@@ -248,6 +276,109 @@ def logout():
         console.print("[bold green]Logged out successfully.[/bold green]")
     else:
         console.print("You are not logged in.")
+
+@main.command()
+def balance():
+    """Check your current account balance."""
+    try:
+        data = mx.get_balance()
+        bal = data.get("balance", "0")
+        console.print(Panel(f"Current Balance: [bold green]${bal}[/bold green]", title="Account Balance", border_style="green"))
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+@main.command()
+def topup():
+    """Purchase credits or subscribe to a plan."""
+    config = load_config()
+    if "access_token" not in config:
+        console.print("[bold yellow]You must be logged in to make a payment.[/bold yellow] Please run `mechanex login`.")
+        return
+
+    try:
+        products = mx.get_subscription_products()
+        if not products:
+            console.print("[yellow]No subscription products available at the moment.[/yellow]")
+            return
+            
+        console.print("\n[bold cyan]Available Plans:[/bold cyan]")
+        
+        # Determine format of products. Expecting list of {name, prices: [{id, unit_amount, currency, etc}]}
+        # But based on typical Stripe implementations, it might be Price objects or Products with prices.
+        # Let's assume a simplified structure or try to handle what comes back.
+        # If products is a list of Stripe Prices/Products
+        
+        options = []
+        
+        # Try to parse based on standard stripe structures or custom backend wrapper
+        if isinstance(products, dict) and "data" in products:
+            products = products["data"]
+            
+        table = Table(title="Select a Plan", show_lines=True)
+        table.add_column("#", style="dim")
+        table.add_column("Plan", style="bold")
+        table.add_column("Price", style="green")
+        table.add_column("Description")
+        
+        for idx, item in enumerate(products, 1):
+            # Try to handle price object directly or product wrapper
+            price_id = item.get("id")
+            # If item represents a Product, it might have a price nested
+            
+            # Simple assumption based on user request "topup" usually implies one-off, but endpoint is "subscriptions"
+            # Let's handle generic "name" and "price/amount"
+            
+            name = item.get("name", item.get("product_name", "Unknown Plan"))
+            
+            # Formatting price
+            unit_amount = item.get("unit_amount")
+            if unit_amount is None:
+                unit_amount = 0
+            amount = float(unit_amount) / 100.0
+
+            if "price" in item: # Sometimes tailored responses put amount in 'price'
+                 # Ensure this is also safe if needed, though usually strict
+                 price_val = item["price"]
+                 if price_val is not None:
+                     amount = float(price_val)
+            
+            currency = item.get("currency", "usd").upper()
+            price_str = f"{amount:.2f} {currency}"
+            
+            desc = item.get("description", "")
+            
+            # If we need to dig deeper into Stripe structure:
+            if "nickname" in item and item["nickname"]:
+                 name = item["nickname"]
+            
+            options.append((price_id, name, price_str))
+            table.add_row(str(idx), name, price_str, desc)
+            
+        console.print(table)
+        
+        choice = click.prompt(f"\nSelect a plan (1-{len(options)})", type=int)
+        
+        if 1 <= choice <= len(options):
+            selected_price_id, selected_name, selected_price = options[choice-1]
+            console.print(f"\nInitiating checkout for [bold green]{selected_name}[/bold green] ({selected_price})...")
+            
+            checkout_res = mx.create_checkout_session(selected_price_id)
+            url = checkout_res.get("url")
+            
+            if url:
+                console.print(Panel(
+                    f"Complete your payment here:\n\n[bold blue underline]{url}[/bold blue underline]",
+                    title="Checkout Link",
+                    border_style="green"
+                ))
+                click.launch(url)
+            else:
+                 console.print("[red]Failed to generate checkout URL.[/red]")
+        else:
+            console.print("[red]Invalid selection.[/red]")
+
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 if __name__ == "__main__":
     main()

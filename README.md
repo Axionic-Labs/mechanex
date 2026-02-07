@@ -35,6 +35,14 @@ import mechanex as mx
 mx.set_key("your-api-key-here", persist=False)
 ```
 
+**Setting the Remote Model:**
+If you are using a remote API key (not a local model), you can specify which hosted model to use:
+```python
+# Set the model for your current API key
+mx.set_model("gpt2-small") 
+# This will validate the model name against available options on the server.
+```
+
 ### 2. Generation and Sampling
 Mechanex allows you to optimize your LLM by altering the underlying sampling method. You can choose between more creative outputs (top-p) or faster responses (greedy).
 You can control generation using various sampling methods:
@@ -171,8 +179,12 @@ behavior = mx.sae.create_behavior_from_jsonl(
 
 # Generate with auto-correction
 response = mx.sae.generate(
+<<<<<<< HEAD
     prompt="Tell me about that",
     auto_correct=True,
+=======
+    prompt="Tell me a secret",
+>>>>>>> 686a1a6 (Updated to incorporate payments)
     behavior_names=["toxicity"]
 )
 ```
@@ -264,8 +276,7 @@ sae_completion = client.chat.completions.create(
     messages=[{"role": "user", "content": "How are you?"}],
     max_tokens=20,
     extra_body={
-        "behavior_names": ["anger"],
-        "auto_correct": True
+        "behavior_names": ["toxicity"],
     }
 )
 print(sae_completion.choices[0].message.content)

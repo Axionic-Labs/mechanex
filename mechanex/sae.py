@@ -210,7 +210,6 @@ class SAEModule(_BaseModule):
         prompt: str,
         max_new_tokens: int = 50,
         behavior_names: Optional[List[str]] = None,
-        auto_correct: bool = True,
         force_steering: Optional[List[str]] = None
     ) -> str:
         """
@@ -222,7 +221,6 @@ class SAEModule(_BaseModule):
                 "prompt": prompt,
                 "max_new_tokens": max_new_tokens,
                 "behavior_names": behavior_names,
-                "auto_correct": auto_correct,
                 "force_steering": force_steering
             }
             response = self._post("/sae/generate", payload)
@@ -316,7 +314,7 @@ class SAEModule(_BaseModule):
                         score = (sim + 1) / 2
                         
                         # 3. Auto-correct
-                        if auto_correct and score.item() > 0.5:
+                        if score.item() > 0.5:
                             # print(f"SAE Triggered ({score.item():.2f}). Correcting...")
                             if s_vec is not None:
                                 # Subtract the steering vector (assuming it represents the unwanted behavior)

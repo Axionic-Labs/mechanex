@@ -98,7 +98,6 @@ Returns behaviors. Combines remote and local if available.
 def generate(prompt: str,
              max_new_tokens: int = 50,
              behavior_names: Optional[List[str]] = None,
-             auto_correct: bool = True,
              force_steering: Optional[List[str]] = None) -> str
 ```
 
