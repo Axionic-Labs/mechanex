@@ -268,6 +268,43 @@ def whoami():
     else:
         console.print("[bold yellow]Not logged in.[/bold yellow] Run 'mechanex login' to begin.")
 
+@main.group(name='manage-account')
+def manage_account():
+    """Manage your account settings."""
+    pass
+
+@manage_account.command(name='delete')
+@click.confirmation_option(prompt='Are you sure you want to delete your account? This cannot be undone.')
+def delete_account():
+    """Permanently delete your account."""
+    try:
+        mx.delete_account()
+        if CONFIG_FILE.exists():
+            CONFIG_FILE.unlink()
+        console.print("[bold green]Account deleted successfully.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+@manage_account.command(name='change-password')
+@click.option('--new-password', prompt=True, hide_input=True, confirmation_prompt=True, help='New password.')
+def change_password(new_password):
+    """Change your password."""
+    try:
+        mx.change_password(new_password)
+        console.print("[bold green]Password changed successfully.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+@manage_account.command(name='change-email')
+@click.option('--new-email', prompt='New Email', help='New email address.')
+def change_email(new_email):
+    """Change your email address."""
+    try:
+        mx.change_email(new_email)
+        console.print("[bold green]Email change initiated. Please check your inbox for confirmation.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
 @main.command()
 def logout():
     """Log out and remove stored credentials."""

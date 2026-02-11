@@ -141,8 +141,10 @@ class SteeringModule(_BaseModule):
                 "layer_idxs": layer_idxs,
                 "method": method
             })
+            if "steering_vector_id" not in resp or resp["steering_vector_id"] is None:
+                raise MechanexError(f"Steering vector ID not found in response: {resp}")
             return resp["steering_vector_id"]
-        except (AuthenticationError, MechanexError) as e:
+        except (AuthenticationError) as e:
             # Check if we have a local model to use for fallback
             local_model = getattr(self._client, 'local_model', None)
             if local_model is not None:
@@ -162,6 +164,8 @@ class SteeringModule(_BaseModule):
                 return local_id
             else:
                 raise e
+        except MechanexError as e:
+            raise e
             
     def get_vectors(self, vector_id: str) -> Dict[int, torch.Tensor]:
         """

@@ -16,7 +16,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "https://axionic-mvp-backend-594546489999.us-east4.run.app", local_model=None):
+    def __init__(self, base_url: str = "https://axionic-backend-prod-594546489999.us-east4.run.app", local_model=None):
         self.base_url = base_url
         self.local_model = local_model
         self._local_vectors = {}
@@ -105,6 +105,34 @@ class Mechanex:
         # Authentication is handled by _get_headers using the stored JWT
         return self._post(f"/payments/checkout?price_id={price_id}")
 
+    def change_password(self, new_password: str):
+        """Change the authenticated user's password."""
+        return self._post("/auth/change-password", {"new_password": new_password})
+
+    def change_email(self, new_email: str):
+        """Change the authenticated user's email."""
+        return self._post("/auth/change-email", {"new_email": new_email})
+
+    def delete_account(self):
+        """Permanently delete the authenticated user's account."""
+        url = f"{self.base_url}/auth/delete-account"
+        headers = self._get_headers("/auth/delete-account")
+        try:
+            response = requests.delete(url, headers=headers)
+            if response.status_code == 401 and self._refresh_session():
+                 response = requests.delete(url, headers=self._get_headers("/auth/delete-account"))
+            response.raise_for_status()
+            
+            # Reset local state
+            self.access_token = None
+            self.refresh_token = None
+            self.api_key = None
+            self._save_config()
+            
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, "DELETE /auth/delete-account failed")
+
     def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors: Optional[List[str]] = None):
         """Turn the model into an OpenAI compatible endpoint."""
         from .serving import run_server
@@ -117,11 +145,7 @@ class Mechanex:
         """
         headers = {}
         authenticated = False
-
-        # Determine which token to use based on endpoint
-        is_inference = any(endpoint.startswith(p) for p in ["/generate", "/steering/generate", "/sae/generate"])
-        
-                   
+      
         if self.api_key:
             headers["x-api-key"] = self.api_key
             authenticated = True
