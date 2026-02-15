@@ -210,10 +210,18 @@ class SAEModule(_BaseModule):
         prompt: str,
         max_new_tokens: int = 50,
         behavior_names: Optional[List[str]] = None,
-        force_steering: Optional[List[str]] = None
+        force_steering: Optional[List[str]] = None,
+        verbose: bool = True
     ) -> str:
         """
         Generation with SAE monitoring. Falls back to local if needed.
+        
+        Args:
+            prompt: Input text prompt
+            max_new_tokens: Maximum tokens to generate
+            behavior_names: List of behavior names to monitor
+            force_steering: List of behavior names to force correction for
+            verbose: If True, prints SSE progress messages in real-time
         """
         try:
             if self._client.api_key:
@@ -223,8 +231,9 @@ class SAEModule(_BaseModule):
                 "behavior_names": behavior_names,
                 "force_steering": force_steering
             }
-            response = self._post("/sae/generate", payload)
-            return response.get("text", "")
+            # Use _post_stream since /sae/generate now uses SSE
+            result = self._post_stream("/sae/generate", payload, verbose=verbose)
+            return result.get("text", "")
         except (AuthenticationError, MechanexError, APIError):
 
             local_model = getattr(self._client, 'local_model', None)

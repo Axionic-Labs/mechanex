@@ -16,7 +16,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "https://axionic-backend-prod-594546489999.us-east4.run.app", local_model=None):
+    def __init__(self, base_url: str = "http://localhost:3000", local_model=None):
         self.base_url = base_url
         self.local_model = local_model
         self._local_vectors = {}
@@ -212,6 +212,76 @@ class Mechanex:
 
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, f"POST {endpoint} failed")
+    
+    def _post_stream(self, endpoint: str, data: dict = None, verbose: bool = False):
+        """
+        Internal helper for POST requests that return SSE streams.
+        Yields progress updates and returns the final result.
+        
+        Args:
+            endpoint: API endpoint
+            data: JSON payload
+            verbose: If True, print progress messages
+            
+        Returns:
+            The final result from the 'complete' status event
+            
+        Raises:
+            MechanexError: If the stream returns an error status
+        """
+        import json as json_lib
+        
+        try:
+            response = requests.post(
+                f"{self.base_url}{endpoint}", 
+                json=data, 
+                headers=self._get_headers(endpoint),
+                stream=True
+            )
+            
+            # Handle 401 with refresh retry
+            if response.status_code == 401 and self._refresh_session():
+                response = requests.post(
+                    f"{self.base_url}{endpoint}", 
+                    json=data, 
+                    headers=self._get_headers(endpoint),
+                    stream=True
+                )
+            
+            response.raise_for_status()
+            
+            # Process SSE stream
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                    
+                # SSE format: "data: {json}"
+                line_str = line.decode('utf-8')
+                if line_str.startswith('data: '):
+                    try:
+                        event_data = json_lib.loads(line_str[6:])  # Skip "data: " prefix
+                        status = event_data.get('status')
+                        
+                        if status == 'complete':
+                            # Return the final result
+                            return event_data.get('result', {})
+                        elif status == 'error':
+                            # Raise error from stream
+                            error_msg = event_data.get('message', 'Unknown error from stream')
+                            raise MechanexError(error_msg)
+                        else:
+                            # Progress update
+                            if verbose and 'message' in event_data:
+                                print(f"[{status}] {event_data['message']}")
+                    except json_lib.JSONDecodeError:
+                        # Skip malformed JSON
+                        continue
+            
+            # If we reach here without a 'complete' event, something went wrong
+            raise MechanexError("Stream ended without completion status")
+            
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, f"POST {endpoint} failed")
 

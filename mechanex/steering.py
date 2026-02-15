@@ -121,11 +121,19 @@ class FewShot(SteeringVectorMethod):
 
 class SteeringModule(_BaseModule):
     """Module for steering vector APIs."""
-    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> str:
+    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot", verbose: bool = True) -> str:
         """
         Computes and stores steering vectors from prompts.
         Corresponds to the /steering/generate endpoint.
         Falls back to local steering if API key is missing or authentication fails.
+        
+        Args:
+            prompts: List of prompt strings
+            positive_answers: List of desired answer strings
+            negative_answers: List of undesired answer strings
+            layer_idxs: Optional layer indices to compute vectors for
+            method: Steering method ("caa" or "few-shot")
+            verbose: If True, prints SSE progress messages in real-time
         """
         if not self._client.api_key:
             raise MechanexError("API key required. Call mx.set_key() first.")
@@ -134,16 +142,17 @@ class SteeringModule(_BaseModule):
             if self._client.api_key is None:
                 raise AuthenticationError("API key missing, falling back to local steering")
 
-            resp = self._post("/steering/generate", {
+            # Use _post_stream since /steering/generate now uses SSE
+            result = self._post_stream("/steering/generate", {
                 "prompts": prompts,
                 "positive_answers": positive_answers,
                 "negative_answers": negative_answers,
                 "layer_idxs": layer_idxs,
                 "method": method
-            })
-            if "steering_vector_id" not in resp or resp["steering_vector_id"] is None:
-                raise MechanexError(f"Steering vector ID not found in response: {resp}")
-            return resp["steering_vector_id"]
+            }, verbose=verbose)
+            if "steering_vector_id" not in result or result["steering_vector_id"] is None:
+                raise MechanexError(f"Steering vector ID not found in response: {result}")
+            return result["steering_vector_id"]
         except (AuthenticationError) as e:
             # Check if we have a local model to use for fallback
             local_model = getattr(self._client, 'local_model', None)

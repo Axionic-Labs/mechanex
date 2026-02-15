@@ -46,6 +46,10 @@ class _BaseModule:
     def _post(self, endpoint: str, data: dict) -> dict:
         """Performs a POST request with Authorization and handles errors."""
         return self._client._post(endpoint, data)
+    
+    def _post_stream(self, endpoint: str, data: dict, verbose: bool = False):
+        """Performs a POST request that returns SSE stream and handles errors."""
+        return self._client._post_stream(endpoint, data, verbose=verbose)
 
     def _get(self, endpoint: str) -> dict:
         """Performs a GET request with Authorization and handles errors."""

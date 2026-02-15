@@ -10,10 +10,21 @@ class GenerationModule(_BaseModule):
         top_k: int = 50,
         top_p: float = 0.9,
         steering_strength: float = 0, 
-        steering_vector=None
+        steering_vector=None,
+        verbose: bool = True
     ) -> str:
         """
         Runs a standard generation. Falls back to local model if available.
+        
+        Args:
+            prompt: Input text prompt
+            max_tokens: Maximum tokens to generate
+            sampling_method: Sampling strategy (top-k, top-p, greedy, ads)
+            top_k: Top-k sampling parameter
+            top_p: Top-p (nucleus) sampling parameter
+            steering_strength: Strength of steering vector application
+            steering_vector: Steering vector ID or dict
+            verbose: If True, prints SSE progress messages in real-time
         """
         if not self._client.api_key:
             from .errors import MechanexError
@@ -31,8 +42,9 @@ class GenerationModule(_BaseModule):
                     "steering_vector_id": steering_vector if isinstance(steering_vector, str) else None,
                     "steering_strength": steering_strength
                 }
-                response = self._post("/generate", payload)
-                return response.get("output", "")
+                # Use _post_stream since /generate now uses SSE
+                result = self._post_stream("/generate", payload, verbose=verbose)
+                return result.get("output", "")
         except Exception as e:
             # Only suppress error if we have a local model to fall back to
             if not getattr(self._client, 'local_model', None):
