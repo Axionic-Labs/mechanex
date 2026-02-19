@@ -35,6 +35,8 @@ class Mechanex:
             if config_path.exists():
                 with open(config_path, "r") as f:
                     config = json.load(f)
+                    if "base_url" in config:
+                        self.base_url = config["base_url"]
                     if "api_key" in config:
                         self.api_key = config["api_key"]
                     if "access_token" in config:
