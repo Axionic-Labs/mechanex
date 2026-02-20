@@ -249,5 +249,152 @@ def logout():
     else:
         console.print("You are not logged in.")
 
+# ---------------------------------------------------------------------------
+# Training pipeline commands
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.option('--num-seeds', default=10, show_default=True, help='Number of prompts to generate.')
+@click.option('--output-file', default='seeds.jsonl', show_default=True, help='Output file name stored in tenant directory.')
+@click.option('--topic', default='customer relationship management', show_default=True, help='Broad topic for generation.')
+@click.option('--teacher-provider', default='google', show_default=True, help='LLM provider for the teacher (e.g. "google").')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
+@click.option('--api-key', default=None, help='Optional API key for the teacher provider.')
+@click.option('--teacher-file', default=None, help='Optional path to a custom teacher implementation.')
+def generate_data(num_seeds, output_file, topic, teacher_provider, teacher_model, api_key, teacher_file):
+    """Generate seed prompt data using a teacher model."""
+    try:
+        result = mx.training.generate_data(
+            num_seeds=num_seeds,
+            output_file=output_file,
+            topic=topic,
+            teacher_provider=teacher_provider,
+            teacher_model=teacher_model,
+            api_key=api_key,
+            teacher_file=teacher_file,
+        )
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command()
+@click.option('--base-model', default='Qwen/Qwen2.5-0.5B-Instruct', show_default=True, help='HuggingFace model ID for the base model.')
+@click.option('--prompts-file', default='seeds.jsonl', show_default=True, help='Path to seed prompts file (relative to tenant directory).')
+@click.option('--schemas-dir', default='tool_schemas', show_default=True, help='Directory containing tool schemas (relative to tenant directory).')
+@click.option('--output-dir', default='sft_output', show_default=True, help='Output directory for the trained model (relative to tenant directory).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model for trajectory generation.')
+@click.option('--teacher-provider', default='google', show_default=True, help='LLM provider for the teacher.')
+@click.option('--epochs', default=3, show_default=True, help='Number of training epochs.')
+@click.option('--batch-size', default=4, show_default=True, help='Training batch size.')
+@click.option('--learning-rate', default=2e-5, show_default=True, help='Training learning rate.')
+@click.option('--gradient-accumulation-steps', default=8, show_default=True, help='Number of gradient accumulation steps.')
+@click.option('--use-peft/--no-peft', default=True, show_default=True, help='Use Parameter Efficient Fine-Tuning (LoRA).')
+def train_sft(base_model, prompts_file, schemas_dir, output_dir, teacher_model, teacher_provider,
+              epochs, batch_size, learning_rate, gradient_accumulation_steps, use_peft):
+    """Run Supervised Fine-Tuning (SFT) on a base model."""
+    try:
+        result = mx.training.train_sft(
+            base_model=base_model,
+            prompts_file=prompts_file,
+            schemas_dir=schemas_dir,
+            output_dir=output_dir,
+            teacher_model=teacher_model,
+            teacher_provider=teacher_provider,
+            epochs=epochs,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            use_peft=use_peft,
+        )
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command()
+@click.option('--model-path', default='sft_output/best_checkpoint', show_default=True, help='Path to the SFT-trained model (relative to tenant directory).')
+@click.option('--output-dir', default='rl_output', show_default=True, help='Output directory for the RL-trained model (relative to tenant directory).')
+@click.option('--prompts-file', default='seeds.jsonl', show_default=True, help='Path to prompts file for RL training (relative to tenant directory).')
+@click.option('--schemas-dir', default='tool_schemas', show_default=True, help='Directory containing tool schemas (relative to tenant directory).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model for rewards/eval.')
+@click.option('--teacher-provider', default='google', show_default=True, help='LLM provider for the teacher.')
+@click.option('--num-train-epochs', default=1, show_default=True, help='Number of RL training epochs.')
+@click.option('--batch-size', default=1, show_default=True, help='Training batch size.')
+@click.option('--gradient-accumulation-steps', default=8, show_default=True, help='Number of gradient accumulation steps.')
+@click.option('--num-generations', default=4, show_default=True, help='Number of generations per prompt for GRPO.')
+def train_rl(model_path, output_dir, prompts_file, schemas_dir, teacher_model, teacher_provider,
+             num_train_epochs, batch_size, gradient_accumulation_steps, num_generations):
+    """Run Reinforcement Learning (GRPO) training on an SFT checkpoint."""
+    try:
+        result = mx.training.train_rl(
+            model_name_or_path=model_path,
+            output_dir=output_dir,
+            prompts_file=prompts_file,
+            schemas_dir=schemas_dir,
+            teacher_model=teacher_model,
+            teacher_provider=teacher_provider,
+            num_train_epochs=num_train_epochs,
+            batch_size=batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            num_generations=num_generations,
+        )
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command()
+@click.argument('model-name')
+@click.option('--num-eval-samples', default=50, show_default=True, help='Number of fresh samples to generate for evaluation.')
+@click.option('--output-dir', default='eval_output', show_default=True, help='Output directory for evaluation results (relative to tenant directory).')
+@click.option('--schemas-dir', default='tool_schemas', show_default=True, help='Directory containing tool schemas (relative to tenant directory).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model for reference trajectories.')
+@click.option('--teacher-provider', default='google', show_default=True, help='LLM provider for the teacher.')
+def run_eval(model_name, num_eval_samples, output_dir, schemas_dir, teacher_model, teacher_provider):
+    """Evaluate a trained model. MODEL_NAME is the path to the model (relative to tenant directory)."""
+    try:
+        result = mx.training.run_eval(
+            model_name=model_name,
+            num_eval_samples=num_eval_samples,
+            output_dir=output_dir,
+            schemas_dir=schemas_dir,
+            teacher_model=teacher_model,
+            teacher_provider=teacher_provider,
+        )
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command()
+@click.argument('model-path')
+@click.option('--extra-args', multiple=True, help='Additional arguments to pass to vLLM serve (repeatable).')
+def deploy(model_path, extra_args):
+    """Deploy a trained model using vLLM serve. MODEL_PATH is relative to tenant directory."""
+    try:
+        result = mx.training.deploy(
+            model_path=model_path,
+            extra_args=list(extra_args) if extra_args else None,
+        )
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command()
+@click.argument('schema_files', nargs=-1, required=True)
+def upload_schemas(schema_files):
+    """Upload tool schema JSON files to your tenant directory.
+
+    SCHEMA_FILES: One or more local paths to JSON schema files.
+    """
+    try:
+        result = mx.training.upload_schemas(list(schema_files))
+        console.print(result)
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
 if __name__ == "__main__":
     main()
