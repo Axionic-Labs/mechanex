@@ -133,6 +133,14 @@ class Mechanex:
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, "DELETE /auth/delete-account failed")
 
+    def train(self, config: dict) -> dict:
+        """Submit a training job to POST /finetuning/train."""
+        return self._post("/finetuning/train", config)
+
+    def check_training_job(self, job_id: str) -> dict:
+        """Check the status of a training job via GET /finetuning/jobs/{job_id}."""
+        return self._get(f"/finetuning/jobs/{job_id}")
+
     def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors: Optional[List[str]] = None):
         """Turn the model into an OpenAI compatible endpoint."""
         from .serving import run_server
