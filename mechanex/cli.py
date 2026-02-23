@@ -26,8 +26,9 @@ def load_config():
 
 @click.group()
 @click.option('--api-url', default=None, help='Override the backend API URL (e.g. http://localhost:3000).')
+@click.option('--api-key', default=None, help='Axionic API key (overrides saved credentials).')
 @click.pass_context
-def main(ctx, api_url):
+def main(ctx, api_url, api_key):
     """Mechanex CLI for managing your Axionic account and models."""
     config = load_config()
 
@@ -35,8 +36,10 @@ def main(ctx, api_url):
     if api_url:
         mx.base_url = api_url
 
-    # Load API Key if present
-    if "api_key" in config:
+    # Load API Key: CLI flag takes priority over saved config
+    if api_key:
+        mx.set_key(api_key)
+    elif "api_key" in config:
         mx.set_key(config["api_key"])
 
     # Load Access Token (JWT) if present
