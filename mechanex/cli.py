@@ -2,6 +2,7 @@ import click
 import json
 import os
 import time
+import asyncio
 from pathlib import Path
 from rich.console import Console
 from rich.table import Table
@@ -425,123 +426,169 @@ def topup():
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
-def _load_schemas_from_dir(schemas_dir: str) -> list:
-    """Read all *.json files in schemas_dir and return them as a list of dicts."""
-    import glob
-    schemas = []
-    for path in sorted(glob.glob(os.path.join(schemas_dir, "*.json"))):
-        with open(path) as f:
-            schemas.append(json.load(f))
-    return schemas
-
-
-def _load_prompts_as_text(prompts_file: str) -> list:
-    """Read a JSONL/text file and return non-empty lines as a list of strings."""
-    texts = []
-    with open(prompts_file) as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                texts.append(line)
-    return texts
-
-
 @main.command(name='generate-data')
-@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
-@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
-@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
-@click.option('--base-model', default='Qwen/Qwen2.5-0.5B-Instruct', show_default=True, help='Base model to fine-tune.')
-@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
+@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSONs or .txt natural language files.')
+@click.option('--teacher-provider', default='google', show_default=True, help='Teacher model provider (google, openai, anthropic).')
 @click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
-@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
-@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
-def generate_data(schemas_dir, hf_repo_name, prompts_file, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
-    """Generate training data and run SFT via the Spectra training pipeline."""
+@click.option('--api-key', envvar='MECHANEX_API_KEY', default=None, help='API key for the teacher model.')
+@click.option('--num-prompts', default=100, show_default=True, type=int, help='Number of seed prompts to generate.')
+@click.option('--output-dir', default='output', show_default=True, help='Output directory where seeds.jsonl will be written.')
+def generate_data(schemas_dir, teacher_provider, teacher_model, api_key, num_prompts, output_dir):
+    """Generate seed prompts from schemas and save to seeds.jsonl."""
+    from mechanex._training.utils.schema_loader import load_schemas
+    from mechanex._training.seed_gen.data_pipeline.seed_generator import SeedGenerator, SeedGeneratorConfig
+    from mechanex._training.seed_gen.api.gemini_client import GeminiConfig
+
     try:
-        schemas = _load_schemas_from_dir(schemas_dir)
+        schemas = load_schemas(schemas_dir)
         if not schemas:
-            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+            console.print(f"[bold red]Error:[/bold red] No schemas found in '{schemas_dir}'.")
             return
 
-        config = {
-            "tool_schemas": schemas,
-            "training_methods": ["SFT"],
-            "hf_repo_name": hf_repo_name,
-            "base_model": base_model,
-            "teacher_provider": teacher_provider,
-            "teacher_model": teacher_model,
-        }
-        if prompts_file:
-            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
-        if teacher_api_key:
-            config["teacher_api_key"] = teacher_api_key
-        if hf_token:
-            config["hf_token"] = hf_token
+        console.print(f"Loaded [bold cyan]{len(schemas)}[/bold cyan] schemas.")
 
-        console.print("Submitting data generation + SFT job...")
-        result = mx.train(config)
-        job_id = result.get("execution_name", "N/A")
-        url = result.get("execution_url", "")
+        gemini_cfg = GeminiConfig(api_key=api_key or '', provider=teacher_provider, model_name=teacher_model)
+        gen_cfg = SeedGeneratorConfig(num_prompts=num_prompts, output_format='jsonl')
+
+        console.print(f"Generating [bold cyan]{num_prompts}[/bold cyan] seed prompts using {teacher_provider}/{teacher_model}...")
+        generator = SeedGenerator(config=gen_cfg, gemini_config=gemini_cfg, tools=schemas)
+
+        loop = asyncio.get_event_loop()
+        batch = loop.run_until_complete(generator.generate())
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        seeds_file = output_path / 'seeds.jsonl'
+        with open(seeds_file, 'w') as f:
+            f.write(batch.to_jsonl())
+
         console.print(Panel(
-            f"[bold green]Job submitted![/bold green]\n\n"
-            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
-            f"Track at: [blue]{url}[/blue]\n\n"
-            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
-            title="Training Started",
+            f"[bold green]Seed generation complete![/bold green]\n\n"
+            f"Generated: [bold cyan]{batch.valid_count}[/bold cyan] valid seed prompts\n"
+            f"Saved to:  [bold cyan]{seeds_file}[/bold cyan]",
+            title="Generate Data",
             border_style="green"
         ))
+        generator.print_stats()
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 
 @main.command(name='train-sft')
-@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
-@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
-@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
-@click.option('--epochs', default=3, show_default=True, type=int, help='Number of SFT training epochs.')
-@click.option('--batch-size', default=4, show_default=True, type=int, help='SFT batch size.')
-@click.option('--learning-rate', default=1e-5, show_default=True, type=float, help='SFT learning rate.')
-@click.option('--base-model', default='Qwen/Qwen2.5-0.5B-Instruct', show_default=True, help='Base model to fine-tune.')
-@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
-@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
-@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
-@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
-def train_sft(schemas_dir, hf_repo_name, prompts_file, epochs, batch_size, learning_rate, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
-    """Run Supervised Fine-Tuning (SFT) via the Spectra training pipeline."""
+@click.option('--schemas-dir', required=True, help='Directory containing tool schemas.')
+@click.option('--data-dir', default='output', show_default=True, help='Directory containing seeds.jsonl from generate-data.')
+@click.option('--num-trajectories', default=None, type=int, help='Number of prompt-response pairs to generate for training. Defaults to all seeds.')
+@click.option('--model-name', default='Qwen/Qwen2.5-0.5B-Instruct', show_default=True, help='Base model to fine-tune.')
+@click.option('--output-dir', default='sft_output', show_default=True, help='Directory for checkpoints and final model.')
+@click.option('--teacher-provider', default=None, help='Teacher model provider (google, openai, anthropic).')
+@click.option('--teacher-model', default=None, help='Teacher model name.')
+@click.option('--api-key', envvar='MECHANEX_API_KEY', default=None, help='API key for the teacher model.')
+@click.option('--learning-rate', default=2e-5, show_default=True, type=float, help='Learning rate.')
+@click.option('--num-train-epochs', default=5, show_default=True, type=int, help='Number of training epochs.')
+@click.option('--batch-size', default=2, show_default=True, type=int, help='Batch size per device.')
+@click.option('--grad-acc', default=2, show_default=True, type=int, help='Gradient accumulation steps.')
+@click.option('--warmup-ratio', default=0.1, show_default=True, type=float, help='Warmup ratio.')
+@click.option('--lr-scheduler', default='cosine_with_min_lr', show_default=True, help='LR scheduler type.')
+@click.option('--optim', default='adamw_8bit', show_default=True, help='Optimizer.')
+@click.option('--weight-decay', default=0.01, show_default=True, type=float, help='Weight decay.')
+@click.option('--eval-steps', default=100, show_default=True, type=int, help='Evaluate every N steps.')
+@click.option('--save-steps', default=100, show_default=True, type=int, help='Save checkpoint every N steps.')
+@click.option('--save-total-limit', default=25, show_default=True, type=int, help='Maximum checkpoints to keep.')
+@click.option('--completion-only-loss', is_flag=True, default=True, help='Compute loss on completions only.')
+@click.option('--wandb-project', default=None, help='Weights & Biases project name.')
+@click.option('--wandb-run', default=None, help='Weights & Biases run name.')
+@click.option('--report-to', default='wandb', show_default=True, help='Reporting backend (wandb, none).')
+@click.option('--env-file', default=None, help='Python file containing a custom CRMEnvironment class.')
+@click.option('--teacher-file', default=None, help='Python file containing a custom GeminiTeacher2 class.')
+def train_sft(schemas_dir, data_dir, num_trajectories, model_name, output_dir, teacher_provider, teacher_model,
+              api_key, learning_rate, num_train_epochs, batch_size, grad_acc, warmup_ratio, lr_scheduler,
+              optim, weight_decay, eval_steps, save_steps, save_total_limit, completion_only_loss,
+              wandb_project, wandb_run, report_to, env_file, teacher_file):
+    """Run Supervised Fine-Tuning using seeds from a previous generate-data run."""
+    from mechanex._training.utils.schema_loader import load_schemas
+    from mechanex._training.training.sft import SFTTrainerModule
+    from mechanex._training.utils.mock_env import AutoEnvironment
+    from mechanex._training.utils.default_teacher import DefaultTeacher
+    from mechanex._training.utils.loader import load_user_class
+
     try:
-        schemas = _load_schemas_from_dir(schemas_dir)
-        if not schemas:
-            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+        import random
+
+        if wandb_project:
+            os.environ['WANDB_PROJECT'] = wandb_project
+        if wandb_run:
+            os.environ['WANDB_NAME'] = wandb_run
+
+        schemas = load_schemas(schemas_dir)
+        schemas_dicts = [s.to_json_schema() for s in schemas]
+
+        if env_file:
+            EnvClass = load_user_class(env_file, 'CRMEnvironment')
+            env = EnvClass()
+        else:
+            env = AutoEnvironment(schemas_dicts)
+
+        if teacher_file:
+            TeacherClass = load_user_class(teacher_file, 'GeminiTeacher2')
+            teacher = TeacherClass(schemas_dicts)
+        else:
+            if not teacher_provider:
+                if os.getenv('GEMINI_API_KEY'):
+                    teacher_provider = 'google'
+                else:
+                    console.print("[bold red]Error:[/bold red] --teacher-provider is required (or set GEMINI_API_KEY).")
+                    return
+            teacher = DefaultTeacher(provider_name=teacher_provider, schemas=schemas_dicts, model_name=teacher_model, api_key=api_key)
+
+        trainer = SFTTrainerModule(model_name, env, teacher, schemas_dicts, output_dir)
+
+        seeds_file = Path(data_dir) / 'seeds.jsonl'
+        if not seeds_file.exists():
+            console.print(f"[bold red]Error:[/bold red] seeds.jsonl not found in '{data_dir}'. Run generate-data first.")
             return
 
-        config = {
-            "tool_schemas": schemas,
-            "training_methods": ["SFT"],
-            "hf_repo_name": hf_repo_name,
-            "base_model": base_model,
-            "teacher_provider": teacher_provider,
-            "teacher_model": teacher_model,
-            "sft_epochs": epochs,
-            "sft_batch_size": batch_size,
-            "sft_learning_rate": learning_rate,
-        }
-        if prompts_file:
-            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
-        if teacher_api_key:
-            config["teacher_api_key"] = teacher_api_key
-        if hf_token:
-            config["hf_token"] = hf_token
+        with open(seeds_file) as f:
+            seed_entries = [json.loads(line) for line in f if line.strip()]
 
-        console.print(f"Submitting SFT job (epochs={epochs}, batch_size={batch_size}, lr={learning_rate})...")
-        result = mx.train(config)
-        job_id = result.get("execution_name", "N/A")
-        url = result.get("execution_url", "")
+        random.shuffle(seed_entries)
+
+        if num_trajectories is not None:
+            if num_trajectories > len(seed_entries):
+                console.print(f"[yellow]Warning:[/yellow] --num-trajectories ({num_trajectories}) exceeds available seeds ({len(seed_entries)}). Using all seeds.")
+            seed_entries = seed_entries[:num_trajectories]
+
+        prompts = [entry['prompt'] for entry in seed_entries]
+        console.print(f"Loaded [bold cyan]{len(prompts)}[/bold cyan] seed prompts from {seeds_file} (shuffled).")
+
+        console.print("Generating trajectories...")
+        loop = asyncio.get_event_loop()
+        data = loop.run_until_complete(trainer.generate_training_data(prompts))
+
+        console.print("Starting training...")
+        dataset = trainer.format_dataset(data)
+
+        train_args_patch = {
+            'learning_rate': learning_rate,
+            'num_train_epochs': num_train_epochs,
+            'per_device_train_batch_size': batch_size,
+            'gradient_accumulation_steps': grad_acc,
+            'warmup_ratio': warmup_ratio,
+            'lr_scheduler_type': lr_scheduler,
+            'optim': optim,
+            'weight_decay': weight_decay,
+            'eval_steps': eval_steps,
+            'save_steps': save_steps,
+            'save_total_limit': save_total_limit,
+            'completion_only_loss': completion_only_loss,
+            'report_to': report_to,
+        }
+
+        trainer.train(dataset, train_args_patch=train_args_patch)
+
         console.print(Panel(
-            f"[bold green]SFT job submitted![/bold green]\n\n"
-            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
-            f"Track at: [blue]{url}[/blue]\n\n"
-            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
-            title="SFT Training Started",
+            f"[bold green]SFT training complete![/bold green]\n\n"
+            f"Final model saved to: [bold cyan]{output_dir}/final_model[/bold cyan]",
+            title="Train SFT",
             border_style="green"
         ))
     except Exception as e:
@@ -549,51 +596,117 @@ def train_sft(schemas_dir, hf_repo_name, prompts_file, epochs, batch_size, learn
 
 
 @main.command(name='train-rl')
-@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
-@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
-@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
-@click.option('--epochs', default=5, show_default=True, type=int, help='Number of GRPO training epochs.')
-@click.option('--learning-rate', default=5e-7, show_default=True, type=float, help='GRPO learning rate.')
-@click.option('--base-model', default='Qwen/Qwen2.5-0.5B-Instruct', show_default=True, help='Base model to fine-tune.')
-@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
-@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
-@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
-@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
-def train_rl(schemas_dir, hf_repo_name, prompts_file, epochs, learning_rate, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
-    """Run Reinforcement Learning (GRPO) training via the Spectra training pipeline."""
+@click.option('--model-name', required=True, help='Path to the SFT-trained model to start RL from.')
+@click.option('--schemas-dir', required=True, help='Directory containing tool schemas.')
+@click.option('--data-dir', default='output', show_default=True, help='Directory containing seeds.jsonl from generate-data.')
+@click.option('--output-dir', default='rl_output', show_default=True, help='Directory for checkpoints and final model.')
+@click.option('--teacher-provider', default='google', show_default=True, help='Teacher model provider for ARA reward (google, openai, anthropic).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name for ARA reward scoring.')
+@click.option('--api-key', envvar='MECHANEX_API_KEY', default=None, help='API key for the teacher/reward model.')
+@click.option('--learning-rate', default=5e-6, show_default=True, type=float, help='Learning rate.')
+@click.option('--num-train-epochs', default=1, show_default=True, type=int, help='Number of RL training epochs.')
+@click.option('--batch-size', default=1, show_default=True, type=int, help='Batch size per device.')
+@click.option('--grad-acc', default=8, show_default=True, type=int, help='Gradient accumulation steps.')
+@click.option('--num-generations', default=4, show_default=True, type=int, help='Number of completions per prompt for GRPO.')
+@click.option('--max-prompt-length', default=512, show_default=True, type=int, help='Maximum prompt length in tokens.')
+@click.option('--max-completion-length', default=256, show_default=True, type=int, help='Maximum completion length in tokens.')
+@click.option('--report-to', default='none', show_default=True, help='Reporting backend (wandb, none).')
+def train_rl(model_name, schemas_dir, data_dir, output_dir, teacher_provider, teacher_model, api_key,
+             learning_rate, num_train_epochs, batch_size, grad_acc, num_generations,
+             max_prompt_length, max_completion_length, report_to):
+    """Run Reinforcement Learning (GRPO) using seeds from a previous generate-data run."""
+    from mechanex._training.utils.schema_loader import load_schemas
+    from mechanex._training.training.rl import RLTrainerModule
+    from mechanex._training.utils.default_teacher import DefaultTeacher
+    from datasets import Dataset
+
     try:
-        schemas = _load_schemas_from_dir(schemas_dir)
-        if not schemas:
-            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+        import random
+        from tqdm import tqdm
+
+        schemas = load_schemas(schemas_dir)
+        schemas_dicts = [s.to_json_schema() for s in schemas]
+
+        ara_config = {
+            'teacher_provider': teacher_provider,
+            'teacher_model': teacher_model,
+            'teacher_api_key': api_key
+        }
+
+        trainer = RLTrainerModule(model_name, schemas_dicts, ara_config=ara_config, output_dir=output_dir)
+
+        seeds_file = Path(data_dir) / 'seeds.jsonl'
+        if not seeds_file.exists():
+            console.print(f"[bold red]Error:[/bold red] seeds.jsonl not found in '{data_dir}'. Run generate-data first.")
             return
 
-        config = {
-            "tool_schemas": schemas,
-            "training_methods": ["GRPO"],
-            "hf_repo_name": hf_repo_name,
-            "base_model": base_model,
-            "teacher_provider": teacher_provider,
-            "teacher_model": teacher_model,
-            "grpo_epochs": epochs,
-            "grpo_learning_rate": learning_rate,
-        }
-        if prompts_file:
-            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
-        if teacher_api_key:
-            config["teacher_api_key"] = teacher_api_key
-        if hf_token:
-            config["hf_token"] = hf_token
+        with open(seeds_file) as f:
+            data = [json.loads(line) for line in f if line.strip()]
 
-        console.print(f"Submitting RL (GRPO) job (epochs={epochs}, lr={learning_rate})...")
-        result = mx.train(config)
-        job_id = result.get("execution_name", "N/A")
-        url = result.get("execution_url", "")
+        random.shuffle(data)
+        console.print(f"Loaded [bold cyan]{len(data)}[/bold cyan] seed prompts from {seeds_file} (shuffled).")
+
+        dataset = Dataset.from_list(data)
+
+        sample_size = min(len(dataset), 5)
+        needs_generation = any(
+            'response' not in dataset[i] or not dataset[i].get('response')
+            for i in range(sample_size)
+        )
+
+        if needs_generation:
+            console.print("Generating Teacher Trajectories (Ground Truth) for RL...")
+            if not api_key:
+                if os.environ.get('GEMINI_API_KEY'):
+                    api_key = os.environ.get('GEMINI_API_KEY')
+                else:
+                    console.print("[yellow]Warning:[/yellow] No API key for generating teacher traces. RL may fail if ground truth is missing.")
+
+            teacher = DefaultTeacher(provider_name=teacher_provider, schemas=schemas_dicts, model_name=teacher_model, api_key=api_key)
+
+            dataset_list = list(dataset)
+            prompts = [x['prompt'] for x in dataset_list]
+
+            loop = asyncio.get_event_loop()
+
+            async def aug_data():
+                augmented = []
+                for i, p in enumerate(tqdm(prompts, desc="Generating Trajectories")):
+                    trace = await teacher.generate_trace(p)
+                    item = dataset_list[i].copy()
+                    item['response'] = trace['raw'] if trace['success'] and trace['tool_call'] else ''
+                    augmented.append(item)
+                return augmented
+
+            dataset_list = loop.run_until_complete(aug_data())
+            dataset = Dataset.from_list(dataset_list)
+
+            augmented_path = Path(data_dir) / 'seeds_with_gt.jsonl'
+            console.print(f"Saving augmented ground truth to [cyan]{augmented_path}[/cyan]")
+            with open(augmented_path, 'w') as f:
+                for item in dataset_list:
+                    f.write(json.dumps(item) + '\n')
+
+        console.print("Formatting dataset and starting RL training...")
+        dataset = trainer.format_dataset(dataset)
+
+        train_args = {
+            'learning_rate': learning_rate,
+            'num_train_epochs': num_train_epochs,
+            'per_device_train_batch_size': batch_size,
+            'gradient_accumulation_steps': grad_acc,
+            'num_generations': num_generations,
+            'max_prompt_length': max_prompt_length,
+            'max_completion_length': max_completion_length,
+            'report_to': report_to,
+        }
+
+        trainer.train(dataset, train_args_patch=train_args)
+
         console.print(Panel(
-            f"[bold green]RL (GRPO) job submitted![/bold green]\n\n"
-            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
-            f"Track at: [blue]{url}[/blue]\n\n"
-            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
-            title="RL Training Started",
+            f"[bold green]RL training complete![/bold green]\n\n"
+            f"Final model saved to: [bold cyan]{output_dir}/final_rl_model[/bold cyan]",
+            title="Train RL",
             border_style="green"
         ))
     except Exception as e:

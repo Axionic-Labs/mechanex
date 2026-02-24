@@ -29,6 +29,17 @@ setup(
         "sae-lens",
         "openai",
         "huggingface_hub",
+        # Training pipeline dependencies
+        "transformers",
+        "datasets",
+        "trl",
+        "peft",
+        "accelerate",
+        "bitsandbytes",
+        "unsloth",
+        "pyyaml",
+        "anthropic",
+        "google-generativeai",
     ],
     entry_points={
         "console_scripts": [
