@@ -451,7 +451,7 @@ def generate_data(schemas_dir, teacher_provider, teacher_model, api_key, num_pro
         gen_cfg = SeedGeneratorConfig(num_prompts=num_prompts, output_format='jsonl')
 
         console.print(f"Generating [bold cyan]{num_prompts}[/bold cyan] seed prompts using {teacher_provider}/{teacher_model}...")
-        generator = SeedGenerator(config=gen_cfg, gemini_config=gemini_cfg, tools=schemas)
+        generator = SeedGenerator(config=gen_cfg, gemini_config=gemini_cfg, tools=schemas, schemas_dir=schemas_dir)
 
         loop = asyncio.get_event_loop()
         batch = loop.run_until_complete(generator.generate())
