@@ -286,24 +286,19 @@ def delete_account():
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 @manage_account.command(name='change-password')
-@click.option('--new-password', prompt=True, hide_input=True, confirmation_prompt=True, help='New password.')
-def change_password(new_password):
-    """Change your password."""
+def change_password():
+    """Request a password reset email."""
     try:
-        mx.change_password(new_password)
-        console.print("[bold green]Password changed successfully.[/bold green]")
+        mx.change_password()
+        console.print("[bold green]Check your email to complete the password change.[/bold green]")
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
 @manage_account.command(name='change-email')
-@click.option('--new-email', prompt='New Email', help='New email address.')
-def change_email(new_email):
-    """Change your email address."""
-    try:
-        mx.change_email(new_email)
-        console.print("[bold green]Email change initiated. Please check your inbox for confirmation.[/bold green]")
-    except Exception as e:
-        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+def change_email():
+    """Change your email address (managed from the dashboard)."""
+    console.print("[yellow]Email changes are now managed from the Spectra dashboard settings page.[/yellow]")
+    console.print("Visit [bold blue]https://app.axioniclabs.ai/settings?tab=account[/bold blue] to update your email.")
 
 @main.command()
 def logout():

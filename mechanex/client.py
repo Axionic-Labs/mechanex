@@ -105,13 +105,9 @@ class Mechanex:
         # Authentication is handled by _get_headers using the stored JWT
         return self._post(f"/payments/checkout?price_id={price_id}")
 
-    def change_password(self, new_password: str):
-        """Change the authenticated user's password."""
-        return self._post("/auth/change-password", {"new_password": new_password})
-
-    def change_email(self, new_email: str):
-        """Change the authenticated user's email."""
-        return self._post("/auth/change-email", {"new_email": new_email})
+    def change_password(self):
+        """Request a password reset email for the authenticated user."""
+        return self._post("/auth/change-password", {})
 
     def delete_account(self):
         """Permanently delete the authenticated user's account."""
