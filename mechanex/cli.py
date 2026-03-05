@@ -417,5 +417,226 @@ def topup():
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 
+
+def _load_schemas_from_dir(schemas_dir: str) -> list:
+    """Read all *.json files in schemas_dir and return them as a list of dicts."""
+    import glob
+    schemas = []
+    for path in sorted(glob.glob(os.path.join(schemas_dir, "*.json"))):
+        with open(path) as f:
+            schemas.append(json.load(f))
+    return schemas
+
+
+def _load_prompts_as_text(prompts_file: str) -> list:
+    """Read a JSONL/text file and return non-empty lines as a list of strings."""
+    texts = []
+    with open(prompts_file) as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                texts.append(line)
+    return texts
+
+
+@main.command(name='generate-data')
+@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
+@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
+@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
+@click.option('--base-model', default='Qwen/Qwen3-0.6B', show_default=True, help='Base model to fine-tune.')
+@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
+@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
+@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
+def generate_data(schemas_dir, hf_repo_name, prompts_file, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
+    """Generate training data and run SFT via the Spectra training pipeline."""
+    try:
+        schemas = _load_schemas_from_dir(schemas_dir)
+        if not schemas:
+            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+            return
+
+        config = {
+            "tool_schemas": schemas,
+            "training_methods": ["SFT"],
+            "hf_repo_name": hf_repo_name,
+            "base_model": base_model,
+            "teacher_provider": teacher_provider,
+            "teacher_model": teacher_model,
+        }
+        if prompts_file:
+            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
+        if teacher_api_key:
+            config["teacher_api_key"] = teacher_api_key
+        if hf_token:
+            config["hf_token"] = hf_token
+
+        console.print("Submitting data generation + SFT job...")
+        result = mx.train(config)
+        job_id = result.get("execution_name", "N/A")
+        url = result.get("execution_url", "")
+        console.print(Panel(
+            f"[bold green]Job submitted![/bold green]\n\n"
+            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
+            f"Track at: [blue]{url}[/blue]\n\n"
+            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
+            title="Training Started",
+            border_style="green"
+        ))
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command(name='train-sft')
+@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
+@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
+@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
+@click.option('--epochs', default=3, show_default=True, type=int, help='Number of SFT training epochs.')
+@click.option('--batch-size', default=4, show_default=True, type=int, help='SFT batch size.')
+@click.option('--learning-rate', default=1e-5, show_default=True, type=float, help='SFT learning rate.')
+@click.option('--base-model', default='Qwen/Qwen3-0.6B', show_default=True, help='Base model to fine-tune.')
+@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
+@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
+@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
+def train_sft(schemas_dir, hf_repo_name, prompts_file, epochs, batch_size, learning_rate, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
+    """Run Supervised Fine-Tuning (SFT) via the Spectra training pipeline."""
+    try:
+        schemas = _load_schemas_from_dir(schemas_dir)
+        if not schemas:
+            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+            return
+
+        config = {
+            "tool_schemas": schemas,
+            "training_methods": ["SFT"],
+            "hf_repo_name": hf_repo_name,
+            "base_model": base_model,
+            "teacher_provider": teacher_provider,
+            "teacher_model": teacher_model,
+            "sft_epochs": epochs,
+            "sft_batch_size": batch_size,
+            "sft_learning_rate": learning_rate,
+        }
+        if prompts_file:
+            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
+        if teacher_api_key:
+            config["teacher_api_key"] = teacher_api_key
+        if hf_token:
+            config["hf_token"] = hf_token
+
+        console.print(f"Submitting SFT job (epochs={epochs}, batch_size={batch_size}, lr={learning_rate})...")
+        result = mx.train(config)
+        job_id = result.get("execution_name", "N/A")
+        url = result.get("execution_url", "")
+        console.print(Panel(
+            f"[bold green]SFT job submitted![/bold green]\n\n"
+            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
+            f"Track at: [blue]{url}[/blue]\n\n"
+            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
+            title="SFT Training Started",
+            border_style="green"
+        ))
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command(name='train-rl')
+@click.option('--schemas-dir', required=True, help='Directory containing tool schema JSON files.')
+@click.option('--hf-repo-name', required=True, help='HuggingFace repository name for the trained model.')
+@click.option('--prompts-file', default=None, help='Optional JSONL file of seed prompts (passed as tool_schemas_text).')
+@click.option('--epochs', default=5, show_default=True, type=int, help='Number of GRPO training epochs.')
+@click.option('--learning-rate', default=5e-7, show_default=True, type=float, help='GRPO learning rate.')
+@click.option('--base-model', default='Qwen/Qwen3-0.6B', show_default=True, help='Base model to fine-tune.')
+@click.option('--teacher-provider', default='GOOGLE', show_default=True, help='Teacher model provider (GOOGLE, OPENAI, ANTHROPIC).')
+@click.option('--teacher-model', default='gemini-2.0-flash', show_default=True, help='Teacher model name.')
+@click.option('--teacher-api-key', default=None, help='API key for teacher provider.')
+@click.option('--hf-token', default=None, help='HuggingFace token (uses saved token if omitted).')
+def train_rl(schemas_dir, hf_repo_name, prompts_file, epochs, learning_rate, base_model, teacher_provider, teacher_model, teacher_api_key, hf_token):
+    """Run Reinforcement Learning (GRPO) training via the Spectra training pipeline."""
+    try:
+        schemas = _load_schemas_from_dir(schemas_dir)
+        if not schemas:
+            console.print(f"[bold red]Error:[/bold red] No JSON schema files found in '{schemas_dir}'.")
+            return
+
+        config = {
+            "tool_schemas": schemas,
+            "training_methods": ["GRPO"],
+            "hf_repo_name": hf_repo_name,
+            "base_model": base_model,
+            "teacher_provider": teacher_provider,
+            "teacher_model": teacher_model,
+            "grpo_epochs": epochs,
+            "grpo_learning_rate": learning_rate,
+        }
+        if prompts_file:
+            config["tool_schemas_text"] = _load_prompts_as_text(prompts_file)
+        if teacher_api_key:
+            config["teacher_api_key"] = teacher_api_key
+        if hf_token:
+            config["hf_token"] = hf_token
+
+        console.print(f"Submitting RL (GRPO) job (epochs={epochs}, lr={learning_rate})...")
+        result = mx.train(config)
+        job_id = result.get("execution_name", "N/A")
+        url = result.get("execution_url", "")
+        console.print(Panel(
+            f"[bold green]RL (GRPO) job submitted![/bold green]\n\n"
+            f"Execution: [bold cyan]{job_id}[/bold cyan]\n"
+            f"Track at: [blue]{url}[/blue]\n\n"
+            f"[dim]Run 'mechanex run-eval --job-id {job_id}' to check status.[/dim]",
+            title="RL Training Started",
+            border_style="green"
+        ))
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command(name='run-eval')
+@click.option('--job-id', required=True, help='Training job execution name (returned when training was submitted).')
+def run_eval(job_id):
+    """Check the status of a training job."""
+    try:
+        result = mx.check_training_job(job_id)
+        status = result.get("status", "UNKNOWN")
+        start_time = result.get("start_time") or "N/A"
+        completion_time = result.get("completion_time") or "N/A"
+        log_uri = result.get("log_uri") or ""
+
+        color = {"SUCCEEDED": "green", "FAILED": "red", "RUNNING": "yellow", "PENDING": "cyan"}.get(status, "white")
+        info = (
+            f"Status: [bold {color}]{status}[/bold {color}]\n"
+            f"Started:   {start_time}\n"
+            f"Completed: {completion_time}"
+        )
+        if log_uri:
+            info += f"\nLogs: [blue]{log_uri}[/blue]"
+
+        console.print(Panel(info, title=f"Job: {job_id}", border_style=color))
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+
+@main.command(name='deploy')
+@click.option('--job-id', default=None, help='Training job execution name to check upload status.')
+def deploy(job_id):
+    """Show deployment info. Models are auto-uploaded to HuggingFace after training completes."""
+    msg = (
+        "[bold green]Automatic deployment is handled by the training pipeline.[/bold green]\n\n"
+        "After training completes, your model is automatically uploaded to HuggingFace.\n"
+        "Use [bold cyan]mechanex run-eval --job-id <execution_name>[/bold cyan] to check job status."
+    )
+    if job_id:
+        try:
+            result = mx.check_training_job(job_id)
+            status = result.get("status", "UNKNOWN")
+            color = {"SUCCEEDED": "green", "FAILED": "red", "RUNNING": "yellow", "PENDING": "cyan"}.get(status, "white")
+            msg += f"\n\nJob [bold cyan]{job_id}[/bold cyan] status: [bold {color}]{status}[/bold {color}]"
+        except Exception as e:
+            msg += f"\n\n[yellow]Could not fetch job status: {e}[/yellow]"
+    console.print(Panel(msg, title="Deploy", border_style="green"))
+
+
 if __name__ == "__main__":
     main()
