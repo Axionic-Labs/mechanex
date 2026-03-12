@@ -35,6 +35,18 @@ import mechanex as mx
 mx.set_key("your-api-key-here", persist=False)
 ```
 
+Choose execution mode at runtime:
+```python
+# "auto" (default): remote when authenticated, local when not authenticated
+mx.set_execution_mode("auto")
+
+# Force local execution (no credits required, local model must be loaded)
+mx.set_execution_mode("local")
+
+# Force remote execution (requires account + credits)
+mx.set_execution_mode("remote")
+```
+
 **Setting the Remote Model:**
 If you are using a remote API key (not a local model), you can specify which hosted model to use:
 ```python
@@ -89,9 +101,10 @@ Mechanex allows you to load models locally for inspection and low-latency hooks.
 ### Loading a Local Model
 ```python
 import mechanex as mx
-mx.set_key("your-api-key-here") # Required even for local mode
 
 mx.load("gpt2-small") # Uses transformer-lens to load the model
+# Optional: force local execution even if API credentials are present
+mx.set_execution_mode("local")
 ```
 
 ### Unloading a Model
@@ -299,5 +312,26 @@ This still requires a paid mechanex API key.
 
 ---
 For more details, visit [axioniclabs.ai](https://axioniclabs.ai/) -->
+
+## Engineering Docs
+
+- [Contributing](CONTRIBUTING.md)
+- [Engineering Standards](docs/ENGINEERING_STANDARDS.md)
+- [Testing Guide](docs/TESTING.md)
+- [CI/CD](docs/CI_CD.md)
+- [Operations Runbook](docs/OPERATIONS_RUNBOOK.md)
+- [Release Process](docs/RELEASE_PROCESS.md)
+
+## Examples and Use Cases
+
+- [Examples Catalog](examples/README.md)
+- Remote examples default to hosted Axionic backend and can be overridden with `MECHANEX_BASE_URL`.
+- Local-first quickstart: `examples/01_local_first_quickstart.py`
+- Remote quickstart: `examples/02_remote_quickstart.py`
+- Sampling strategy sweep: `examples/03_sampling_strategies.py`
+- Strict JSON policy flow: `examples/04_strict_json_policy.py`
+- Compare/evaluate policies: `examples/05_policy_compare_and_evaluate.py`
+- Local steering vectors: `examples/06_local_steering_vectors.py`
+- OpenAI-compatible serving: `examples/07_openai_compatible_server.py`
 
 

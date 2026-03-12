@@ -1,7 +1,9 @@
 import requests
 import torch
 import numpy as np
-from typing import Optional, List
+import json
+import os
+from typing import Optional, List, Dict, Any
 
 from .errors import MechanexError
 from .attribution import AttributionModule
@@ -11,21 +13,27 @@ from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
 from .sae import SAEModule
+from .policy import PolicyModule
 
 class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "http://localhost:3000", local_model=None):
-        self.base_url = base_url
+    DEFAULT_BACKEND_URL = "https://axionic-backend-prod-594546489999.us-east4.run.app"
+
+    def __init__(self, base_url: Optional[str] = None, local_model=None):
+        resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL
+        self.base_url = resolved_base_url.rstrip("/")
         self.local_model = local_model
         self._local_vectors = {}
         self._local_behaviors = {}
+        self._local_policies = {}
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None
         self.access_token = None
         self.refresh_token = None
+        self.execution_mode = "auto"
 
         # Try to load credentials from config file
         try:
@@ -51,6 +59,37 @@ class Mechanex:
         self.generation = GenerationModule(self)
         self.model = ModelModule(self)
         self.sae = SAEModule(self)
+        self.policy = PolicyModule(self)
+
+    def set_execution_mode(self, mode: str = "auto") -> 'Mechanex':
+        """
+        Controls runtime routing:
+        - auto: remote when authenticated, otherwise local if model is loaded
+        - remote: force API execution
+        - local: force local execution
+        """
+        normalized = (mode or "").strip().lower()
+        if normalized not in ("auto", "remote", "local"):
+            raise MechanexError("Execution mode must be one of: auto, remote, local")
+        self.execution_mode = normalized
+        return self
+
+    def should_use_local(self) -> bool:
+        """
+        Resolve execution target based on explicit mode and available resources.
+        """
+        if self.execution_mode == "local":
+            if self.local_model is None:
+                raise MechanexError("Execution mode is 'local' but no local model is loaded.")
+            return True
+
+        if self.execution_mode == "remote":
+            return False
+
+        # auto mode
+        if self.local_model is not None and not (self.api_key or self.access_token):
+            return True
+        return False
 
     def signup(self, email, password):
         """Register a new user."""
@@ -214,76 +253,85 @@ class Mechanex:
             return response.json()
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, f"POST {endpoint} failed")
-    
-    def _post_stream(self, endpoint: str, data: dict = None, verbose: bool = False):
-        """
-        Internal helper for POST requests that return SSE streams.
-        Yields progress updates and returns the final result.
-        
-        Args:
-            endpoint: API endpoint
-            data: JSON payload
-            verbose: If True, print progress messages
-            
-        Returns:
-            The final result from the 'complete' status event
-            
-        Raises:
-            MechanexError: If the stream returns an error status
-        """
-        import json as json_lib
-        
+
+    @staticmethod
+    def _parse_sse_events(lines) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        data_lines: List[str] = []
+
+        def flush_event() -> None:
+            if not data_lines:
+                return
+            payload = "\n".join(data_lines).strip()
+            data_lines.clear()
+            if not payload:
+                return
+            try:
+                evt = json.loads(payload)
+                if isinstance(evt, dict):
+                    events.append(evt)
+            except json.JSONDecodeError:
+                return
+
+        for raw in lines:
+            if raw is None:
+                continue
+            line = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+            line = line.rstrip("\r")
+            if line == "":
+                flush_event()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+
+        flush_event()
+        return events
+
+    def _post_sse(self, endpoint: str, data: dict = None) -> dict:
+        """POST helper for SSE endpoints that emit `data: {json}` events."""
+        response = None
         try:
             response = requests.post(
-                f"{self.base_url}{endpoint}", 
-                json=data, 
+                f"{self.base_url}{endpoint}",
+                json=data,
                 headers=self._get_headers(endpoint),
-                stream=True
+                stream=True,
             )
-            
-            # Handle 401 with refresh retry
             if response.status_code == 401 and self._refresh_session():
                 response = requests.post(
-                    f"{self.base_url}{endpoint}", 
-                    json=data, 
+                    f"{self.base_url}{endpoint}",
+                    json=data,
                     headers=self._get_headers(endpoint),
-                    stream=True
+                    stream=True,
                 )
-            
             response.raise_for_status()
-            
-            # Process SSE stream
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                    
-                # SSE format: "data: {json}"
-                line_str = line.decode('utf-8')
-                if line_str.startswith('data: '):
-                    try:
-                        event_data = json_lib.loads(line_str[6:])  # Skip "data: " prefix
-                        status = event_data.get('status')
-                        
-                        if status == 'complete':
-                            # Return the final result
-                            return event_data.get('result', {})
-                        elif status == 'error':
-                            # Raise error from stream
-                            error_msg = event_data.get('message', 'Unknown error from stream')
-                            raise MechanexError(error_msg)
-                        else:
-                            # Progress update
-                            if verbose and 'message' in event_data:
-                                print(f"[{status}] {event_data['message']}")
-                    except json_lib.JSONDecodeError:
-                        # Skip malformed JSON
-                        continue
-            
-            # If we reach here without a 'complete' event, something went wrong
-            raise MechanexError("Stream ended without completion status")
-            
+
+            events = self._parse_sse_events(response.iter_lines())
+            if not events:
+                try:
+                    return response.json()
+                except Exception:
+                    return {}
+
+            for evt in events:
+                if evt.get("status") == "error":
+                    msg = evt.get("message") or "SSE endpoint returned an error"
+                    raise MechanexError(msg)
+
+            for evt in reversed(events):
+                if evt.get("status") == "complete":
+                    result = evt.get("result")
+                    return result if isinstance(result, dict) else evt
+
+            # No explicit complete event yet; return last parsed event.
+            return events[-1]
         except requests.exceptions.RequestException as e:
-            raise self._handle_request_error(e, f"POST {endpoint} failed")
+            raise self._handle_request_error(e, f"POST {endpoint} SSE failed")
+        finally:
+            if response is not None:
+                response.close()
 
     def set_key(self, api_key: str, persist: bool = False):
         """
@@ -412,6 +460,7 @@ class Mechanex:
         self.num_layers = None
         self._local_vectors = {}
         self._local_behaviors = {}
+        self._local_policies = {}
         import gc
         gc.collect()
         return self
@@ -420,8 +469,6 @@ class Mechanex:
         """
         Loads a model locally using TransformerLens and automatically configures SAE settings.
         """
-        if not self.api_key:
-            raise MechanexError("API key required. Call mx.set_key() first.")
         from transformer_lens import HookedTransformer
         print(f"Loading {model_name} locally...")
         

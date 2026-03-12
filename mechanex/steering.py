@@ -4,7 +4,6 @@ from typing import List, Optional, Dict, Union
 from tqdm import tqdm
 from .base import _BaseModule
 from .errors import AuthenticationError, MechanexError
-from .utils import steering_opt
 
 class SteeringVectorMethod:
     def __init__(self, model):
@@ -92,6 +91,7 @@ class FewShot(SteeringVectorMethod):
         negative_answers: List[str],
         layer_idxs: List[int] = None
     ) -> Dict[int, torch.Tensor]:
+        from .utils import steering_opt
 
         if not layer_idxs:
             layer_idxs = []
@@ -121,60 +121,67 @@ class FewShot(SteeringVectorMethod):
 
 class SteeringModule(_BaseModule):
     """Module for steering vector APIs."""
-    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot", verbose: bool = True) -> str:
+    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> str:
         """
         Computes and stores steering vectors from prompts.
         Corresponds to the /steering/generate endpoint.
         Falls back to local steering if API key is missing or authentication fails.
-        
-        Args:
-            prompts: List of prompt strings
-            positive_answers: List of desired answer strings
-            negative_answers: List of undesired answer strings
-            layer_idxs: Optional layer indices to compute vectors for
-            method: Steering method ("caa" or "few-shot")
-            verbose: If True, prints SSE progress messages in real-time
         """
-        if not self._client.api_key:
-            raise MechanexError("API key required. Call mx.set_key() first.")
+        use_local = self._client.should_use_local()
+
+        if use_local:
+            return self._generate_vectors_local(prompts, positive_answers, negative_answers, layer_idxs, method)
 
         try:
-            if self._client.api_key is None:
-                raise AuthenticationError("API key missing, falling back to local steering")
+            if not (self._client.api_key or self._client.access_token):
+                raise AuthenticationError("Authentication missing, falling back to local steering")
 
-            # Use _post_stream since /steering/generate now uses SSE
-            result = self._post_stream("/steering/generate", {
+            resp = self._post_sse("/steering/generate", {
                 "prompts": prompts,
                 "positive_answers": positive_answers,
                 "negative_answers": negative_answers,
                 "layer_idxs": layer_idxs,
                 "method": method
-            }, verbose=verbose)
-            if "steering_vector_id" not in result or result["steering_vector_id"] is None:
-                raise MechanexError(f"Steering vector ID not found in response: {result}")
-            return result["steering_vector_id"]
-        except (AuthenticationError) as e:
-            # Check if we have a local model to use for fallback
+            })
+            if "steering_vector_id" not in resp or resp["steering_vector_id"] is None:
+                raise MechanexError(f"Steering vector ID not found in response: {resp}")
+            return resp["steering_vector_id"]
+        except (AuthenticationError):
             local_model = getattr(self._client, 'local_model', None)
             if local_model is not None:
-                if method == "caa":
-                    steerer = CAA(local_model)
-                else:
-                    steerer = FewShot(local_model)
-                
-                vectors = steerer(prompts, positive_answers, negative_answers, layer_idxs)
-                # Store vectors locally or return a local reference
-                # For now we'll just return a placeholder ID and store them on the client
-                import uuid
-                local_id = str(uuid.uuid4())
-                if not hasattr(self._client, '_local_vectors'):
-                    self._client._local_vectors = {}
-                self._client._local_vectors[local_id] = vectors
-                return local_id
-            else:
-                raise e
-        except MechanexError as e:
-            raise e
+                return self._generate_vectors_local(prompts, positive_answers, negative_answers, layer_idxs, method)
+            raise
+        except MechanexError:
+            raise
+
+    def _generate_vectors_local(
+        self,
+        prompts: List[str],
+        positive_answers: List[str],
+        negative_answers: List[str],
+        layer_idxs: Optional[List[int]],
+        method: str,
+    ) -> str:
+        local_model = getattr(self._client, 'local_model', None)
+        if local_model is None:
+            raise MechanexError("No local model loaded. Call mx.load_model(...) first.")
+
+        method_normalized = (method or "few-shot").strip().lower()
+        if method_normalized == "steering-perceptrons":
+            raise MechanexError("Steering perceptrons are not supported for local execution.")
+
+        if method_normalized == "caa":
+            steerer = CAA(local_model)
+        else:
+            steerer = FewShot(local_model)
+
+        vectors = steerer(prompts, positive_answers, negative_answers, layer_idxs)
+        import uuid
+        local_id = str(uuid.uuid4())
+        if not hasattr(self._client, '_local_vectors'):
+            self._client._local_vectors = {}
+        self._client._local_vectors[local_id] = vectors
+        return local_id
             
     def get_vectors(self, vector_id: str) -> Dict[int, torch.Tensor]:
         """
