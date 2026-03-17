@@ -50,9 +50,14 @@ class SAEModule(_BaseModule):
         """
         Define a new behavior. Falls back to local computation if remote fails.
         """
+        use_local = self._client.should_use_local()
+        if use_local:
+            return self._compute_behavior_locally(behavior_name, prompts, positive_answers, negative_answers, steering_vector_id)
+
         try:
-            if self._client.api_key:
-                payload = {
+            if not (self._client.api_key or self._client.access_token):
+                raise AuthenticationError("Authentication missing, falling back to local SAE behavior creation")
+            payload = {
                 "behavior_name": behavior_name,
                 "prompts": prompts,
                 "positive_answers": positive_answers,
@@ -197,7 +202,7 @@ class SAEModule(_BaseModule):
         """Returns behaviors. Combines remote and local if available."""
         remote_behaviors = []
         try:
-            if self._client.api_key:
+            if (self._client.api_key or self._client.access_token) and not self._client.should_use_local():
                 remote_behaviors = self._get("/behaviors")
         except:
             pass
@@ -215,121 +220,94 @@ class SAEModule(_BaseModule):
         """
         Generation with SAE monitoring. Falls back to local if needed.
         """
+        if self._client.should_use_local():
+            return self._generate_local(prompt, max_new_tokens, behavior_names, force_steering)
+
         try:
-            if self._client.api_key:
-                payload = {
+            if not (self._client.api_key or self._client.access_token):
+                raise AuthenticationError("Authentication missing, falling back to local SAE generation")
+            payload = {
                 "prompt": prompt,
                 "max_new_tokens": max_new_tokens,
                 "behavior_names": behavior_names,
                 "force_steering": force_steering
             }
-            response = self._post("/sae/generate", payload)
+            response = self._post_sse("/sae/generate", payload)
             return response.get("text", "")
         except (AuthenticationError, MechanexError, APIError):
+            return self._generate_local(prompt, max_new_tokens, behavior_names, force_steering)
 
-            local_model = getattr(self._client, 'local_model', None)
-            if local_model is not None:
-                # Basic generation without behaviors
-                if not behavior_names:
-                    output = local_model.generate(prompt, max_new_tokens=max_new_tokens)
-                    return output if isinstance(output, str) else local_model.to_string(output)[0]
+    def _generate_local(
+        self,
+        prompt: str,
+        max_new_tokens: int,
+        behavior_names: Optional[List[str]],
+        force_steering: Optional[List[str]],
+    ) -> str:
+        local_model = getattr(self._client, 'local_model', None)
+        if local_model is None:
+            raise MechanexError("No local model loaded. Call mx.load_model(...) first.")
 
-                # SAE-monitored generation
-                fwd_hooks = []
-                
-                # Check for cached SAEs
-                if not hasattr(self, "_local_saes"):
-                    self._local_saes = {}
+        if not behavior_names:
+            output = local_model.generate(prompt, max_new_tokens=max_new_tokens)
+            return output if isinstance(output, str) else local_model.to_string(output)[0]
 
-                for b_name in behavior_names:
-                    # Find behavior
-                    behavior = self._client._local_behaviors.get(b_name)
-                    if not behavior:
-                        print(f"Warning: Local behavior '{b_name}' not found. Skipping.")
-                        continue
-                    
-                    hook_name = behavior["hook_name"]
-                    sae_id = behavior.get("sae_id", hook_name)
-                    sae_release = behavior["sae_release"]
-                    
-                    # Load SAE
-                    if sae_id in self._local_saes:
-                        sae = self._local_saes[sae_id]
-                    else:
-                        from sae_lens import SAE
-                        print(f"Loading SAE for {hook_name} (ID: {sae_id})...")
-                        sae, _, _ = SAE.from_pretrained(sae_release, sae_id)
-                        sae.to(local_model.cfg.device)
-                        self._local_saes[sae_id] = sae
+        fwd_hooks = []
+        if not hasattr(self, "_local_saes"):
+            self._local_saes = {}
 
-                    # Prepare vectors
-                    sae_baseline = torch.tensor(behavior["sae_baseline"]).to(local_model.cfg.device)
-                    # Use provided steering vector ID if available (highest priority)
-                    sv_id = behavior.get("steering_vector_id")
-                    steering_vec = None
-                    
-                    if sv_id:
-                        try:
-                            # Get vectors dict {layer: tensor}
-                            vectors = self._client.steering.get_vectors(sv_id)
-                            # Find vector for current layer? Or apply to all?
-                            # For simplicity in this hook, we only apply if the layer matches
-                            # or we'd need multiple hooks.
-                            # Usually SAE and steering operate on the same blocks.
-                            # We'll try to find a vector for the layer corresponding to hook_name
-                            try:
-                                # Extract layer index from hook_name "blocks.X.hook_resid_pre"
-                                layer_idx = int(hook_name.split(".")[1])
-                                if layer_idx in vectors:
-                                    steering_vec = vectors[layer_idx].to(local_model.cfg.device)
-                            except:
-                                pass
-                        except:
-                            print(f"Warning: Could not load steering vector {sv_id}")
-                    
-                    # Fallback to behavior-computed residual vector
-                    if steering_vec is None and "steering_vector" in behavior:
-                        steering_vec = torch.tensor(behavior["steering_vector"]).to(local_model.cfg.device)
+        for b_name in behavior_names:
+            behavior = self._client._local_behaviors.get(b_name)
+            if not behavior:
+                print(f"Warning: Local behavior '{b_name}' not found. Skipping.")
+                continue
 
-                    # Define Hook
-                    def sae_hook(activations, hook, sae=sae, baseline=sae_baseline, s_vec=steering_vec):
-                        # activations: [batch, pos, d_model]
-                        # sae.encode requires input [..., d_model]
-                        
-                        # 1. Encode
-                        latents = sae.encode(activations) 
-                        
-                        # 2. Similarity (use last token for generation steering?)
-                        # But generate() passes the whole sequence? 
-                        # TransformerLens generate usually caches past KV, so activations 
-                        # might just be the new token?
-                        # Actually, run_with_hooks in generate context works on chunks.
-                        # We calculate similarity on the last position
-                        current_latent = latents[:, -1, :] 
-                        
-                        # Cosine Similarity
-                        sim = torch.nn.functional.cosine_similarity(current_latent, baseline, dim=-1)
-                        
-                        # Remap [-1, 1] -> [0, 1]
-                        score = (sim + 1) / 2
-                        
-                        # 3. Auto-correct
-                        if score.item() > 0.5:
-                            # print(f"SAE Triggered ({score.item():.2f}). Correcting...")
-                            if s_vec is not None:
-                                # Subtract the steering vector (assuming it represents the unwanted behavior)
-                                # We broadcast s_vec to batch logic if needed
-                                activations[:, -1, :] -= s_vec
-                                
-                        return activations
+            hook_name = behavior["hook_name"]
+            sae_id = behavior.get("sae_id", hook_name)
+            sae_release = behavior["sae_release"]
 
-                    fwd_hooks.append((hook_name, sae_hook))
+            if sae_id in self._local_saes:
+                sae = self._local_saes[sae_id]
+            else:
+                from sae_lens import SAE
+                print(f"Loading SAE for {hook_name} (ID: {sae_id})...")
+                sae, _, _ = SAE.from_pretrained(sae_release, sae_id)
+                sae.to(local_model.cfg.device)
+                self._local_saes[sae_id] = sae
 
-                # Generate with hooks
-                output = local_model.generate(
-                    prompt, 
-                    max_new_tokens=max_new_tokens,
-                    fwd_hooks=fwd_hooks
-                )
-                return output if isinstance(output, str) else local_model.to_string(output)[0]
-            raise
+            sae_baseline = torch.tensor(behavior["sae_baseline"]).to(local_model.cfg.device)
+            sv_id = behavior.get("steering_vector_id")
+            steering_vec = None
+
+            if sv_id:
+                try:
+                    vectors = self._client.steering.get_vectors(sv_id)
+                    try:
+                        layer_idx = int(hook_name.split(".")[1])
+                        if layer_idx in vectors:
+                            steering_vec = vectors[layer_idx].to(local_model.cfg.device)
+                    except Exception:
+                        pass
+                except Exception:
+                    print(f"Warning: Could not load steering vector {sv_id}")
+
+            if steering_vec is None and "steering_vector" in behavior:
+                steering_vec = torch.tensor(behavior["steering_vector"]).to(local_model.cfg.device)
+
+            def sae_hook(activations, hook, sae=sae, baseline=sae_baseline, s_vec=steering_vec):
+                latents = sae.encode(activations)
+                current_latent = latents[:, -1, :]
+                sim = torch.nn.functional.cosine_similarity(current_latent, baseline, dim=-1)
+                score = (sim + 1) / 2
+                if score.item() > 0.5 and s_vec is not None:
+                    activations[:, -1, :] -= s_vec
+                return activations
+
+            fwd_hooks.append((hook_name, sae_hook))
+
+        output = local_model.generate(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            fwd_hooks=fwd_hooks
+        )
+        return output if isinstance(output, str) else local_model.to_string(output)[0]

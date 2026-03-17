@@ -1,0 +1,3 @@
+{"prompt": "Explain this feature release.", "positive_answer": "Short summary with 2-3 direct points.", "negative_answer": "Very long and repetitive explanation with tangents."}
+{"prompt": "Write a support reply for password reset.", "positive_answer": "Clear steps in under 4 lines.", "negative_answer": "Overly verbose response with extra context."}
+{"prompt": "Give rollout advice for policy updates.", "positive_answer": "Use staged rollout, monitor errors, and keep rollback ready.", "negative_answer": "Extremely long, unfocused narrative."}
