@@ -1,0 +1,3 @@
+{"prompt": "User: Please summarize this security report.\nAssistant:", "positive_answer": "Key findings: patch exposed endpoints, rotate secrets, and enforce MFA.", "negative_answer": "This is too long and mostly unrelated details."}
+{"prompt": "User: Give me practical API hardening tips.\nAssistant:", "positive_answer": "Use auth scopes, strict schema validation, and rate limiting.", "negative_answer": "Maybe just keep coding and hope for the best."}
+{"prompt": "User: How should we improve production reliability?\nAssistant:", "positive_answer": "Instrument retries, add circuit breakers, and monitor p95 latency.", "negative_answer": "No major changes are needed."}

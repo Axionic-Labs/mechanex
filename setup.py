@@ -29,6 +29,8 @@ setup(
         "sae-lens",
         "openai",
         "huggingface_hub",
+        "jsonschema",
+        "pyyaml"
     ],
     entry_points={
         "console_scripts": [

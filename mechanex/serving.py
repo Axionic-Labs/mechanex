@@ -33,10 +33,14 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
             max_tokens = body.get("max_tokens", 100)
             temperature = body.get("temperature", 0.7)
             top_p = body.get("top_p", 1.0)
+            top_k = body.get("top_k", 50)
+            sampling_method = body.get("sampling_method", "top-k")
             
             # Mechanistic features from body
             steering_vector = body.get("steering_vector") or body.get("steering_vector_id")
             steering_strength = body.get("steering_strength", 0)
+            policy = body.get("policy")
+            policy_id = body.get("policy_id")
             
             # Merge global corrected behaviors with request behaviors
             request_behaviors = body.get("behavior_names") or []
@@ -67,9 +71,14 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                     output = client.generation.generate(
                         prompt=prompt,
                         max_tokens=max_tokens,
+                        sampling_method=sampling_method,
+                        top_k=top_k,
                         top_p=top_p,
+                        temperature=temperature,
                         steering_vector=steering_vector,
-                        steering_strength=steering_strength
+                        steering_strength=steering_strength,
+                        policy=policy,
+                        policy_id=policy_id,
                     )
             
             # Format as OpenAI response
@@ -90,9 +99,9 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": len(prompt.split()), # Mock
-                    "completion_tokens": len(str(output).split()), # Mock
-                    "total_tokens": 0 # Mock
+                    "prompt_tokens": len(prompt.split()),
+                    "completion_tokens": len(str(output).split()),
+                    "total_tokens": len(prompt.split()) + len(str(output).split())
                 }
             }
         except Exception as e:
@@ -104,10 +113,16 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
             body = await request.json()
             prompt = body.get("prompt", "")
             max_tokens = body.get("max_tokens", 100)
+            top_k = body.get("top_k", 50)
+            top_p = body.get("top_p", 0.9)
+            temperature = body.get("temperature", 0.7)
+            sampling_method = body.get("sampling_method", "top-k")
             
             # Mechanistic features from body
             steering_vector = body.get("steering_vector") or body.get("steering_vector_id")
             steering_strength = body.get("steering_strength", 0)
+            policy = body.get("policy")
+            policy_id = body.get("policy_id")
             
             # Merge global corrected behaviors with request behaviors
             request_behaviors = body.get("behavior_names") or []
@@ -132,8 +147,14 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                     output = client.generation.generate(
                         prompt=prompt,
                         max_tokens=max_tokens,
+                        sampling_method=sampling_method,
+                        top_k=top_k,
+                        top_p=top_p,
+                        temperature=temperature,
                         steering_vector=steering_vector,
-                        steering_strength=steering_strength
+                        steering_strength=steering_strength,
+                        policy=policy,
+                        policy_id=policy_id,
                     )
             
             response_id = f"cmpl-{uuid.uuid4()}"
@@ -149,7 +170,12 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                         "logprobs": None,
                         "finish_reason": "length"
                     }
-                ]
+                ],
+                "usage": {
+                    "prompt_tokens": len(prompt.split()),
+                    "completion_tokens": len(str(output).split()),
+                    "total_tokens": len(prompt.split()) + len(str(output).split())
+                }
             }
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": {"message": str(e), "type": "server_error"}})
