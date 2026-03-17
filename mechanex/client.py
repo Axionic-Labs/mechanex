@@ -28,6 +28,7 @@ class Mechanex:
         self._local_vectors = {}
         self._local_behaviors = {}
         self._local_policies = {}
+        self._local_policy_presets = {}
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None

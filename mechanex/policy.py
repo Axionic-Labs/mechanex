@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
+import sys
 import time
 import uuid
+from itertools import product
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base import _BaseModule
@@ -160,6 +163,139 @@ class PolicyModule(_BaseModule):
         payload = {k: v for k, v in payload.items() if v is not None}
         return self._post("/policies/evaluate", payload)
 
+    def publish_preset(
+        self,
+        name: str,
+        policy: Dict[str, Any],
+        visibility: str = "private",
+        tags: Optional[List[str]] = None,
+        description: Optional[str] = None,
+    ) -> str:
+        if self._use_local():
+            preset_id = str(uuid.uuid4())
+            self._client._local_policy_presets[preset_id] = {
+                "id": preset_id,
+                "name": name,
+                "policy": policy,
+                "visibility": visibility,
+                "tags": tags or [],
+                "description": description,
+            }
+            return preset_id
+
+        self._require_remote_auth()
+        payload = {
+            "name": name,
+            "policy": policy,
+            "visibility": visibility,
+            "tags": tags or [],
+            "description": description,
+        }
+        resp = self._post("/policies/presets/publish", payload)
+        preset_id = resp.get("preset_id")
+        if not preset_id:
+            raise MechanexError(f"Failed to publish preset: {resp}")
+        return preset_id
+
+    def list_presets(self, include_public: bool = True) -> List[Dict[str, Any]]:
+        if self._use_local():
+            return list(self._client._local_policy_presets.values())
+
+        self._require_remote_auth()
+        suffix = "true" if include_public else "false"
+        resp = self._get(f"/policies/presets?include_public={suffix}")
+        return resp if isinstance(resp, list) else []
+
+    def clone_preset(self, preset_id: str) -> str:
+        if self._use_local():
+            preset = self._client._local_policy_presets.get(preset_id)
+            if not preset:
+                raise MechanexError(f"Preset '{preset_id}' not found in local session.")
+            return self.save(preset.get("policy") or {})
+
+        self._require_remote_auth()
+        resp = self._post(f"/policies/presets/{preset_id}/clone", {})
+        policy_id = resp.get("policy_id")
+        if not policy_id:
+            raise MechanexError(f"Failed to clone preset: {resp}")
+        return policy_id
+
+    def auto_tune(
+        self,
+        prompts: List[str],
+        base_policy: Optional[Dict[str, Any]] = None,
+        base_policy_id: Optional[str] = None,
+        search_space: Optional[Dict[str, List[Any]]] = None,
+        max_trials: int = 24,
+        max_new_tokens: int = 128,
+    ) -> Dict[str, Any]:
+        if self._use_local():
+            if base_policy is not None:
+                policy = base_policy
+            elif base_policy_id:
+                policy = self._resolve_local_policy(policy=None, policy_id=base_policy_id)
+            else:
+                policy = {"sampling": {"method": "top-k", "temperature": 0.7, "top_p": 0.9}, "optimization": {"best_of_n": 1}}
+
+            ss = search_space or {}
+            methods = ss.get("sampling.method") or [policy.get("sampling", {}).get("method", "top-k")]
+            temps = ss.get("sampling.temperature") or [policy.get("sampling", {}).get("temperature", 0.7)]
+            top_ps = ss.get("sampling.top_p") or [policy.get("sampling", {}).get("top_p", 0.9)]
+            best_of_ns = ss.get("optimization.best_of_n") or [policy.get("optimization", {}).get("best_of_n", 1)]
+
+            trials: List[Dict[str, Any]] = []
+            for idx, (method, temp, top_p, best_of_n) in enumerate(product(methods, temps, top_ps, best_of_ns)):
+                if idx >= max(1, int(max_trials)):
+                    break
+                candidate = json.loads(json.dumps(policy))
+                candidate.setdefault("sampling", {})
+                candidate.setdefault("optimization", {})
+                candidate["sampling"]["method"] = method
+                candidate["sampling"]["temperature"] = float(temp)
+                candidate["sampling"]["top_p"] = float(top_p)
+                candidate["optimization"]["best_of_n"] = int(best_of_n)
+
+                outputs = [
+                    self._run_local_policy(
+                        prompt=p,
+                        policy=candidate,
+                        max_new_tokens=max_new_tokens,
+                        include_trace=False,
+                    )
+                    for p in prompts
+                ]
+                pass_count = sum(1 for o in outputs if o.get("accepted"))
+                fail_count = len(outputs) - pass_count
+                avg_score = sum(float(o.get("score", 0.0)) for o in outputs) / max(1, len(outputs))
+                avg_latency = sum(float(o.get("latency_ms", 0.0)) for o in outputs) / max(1, len(outputs))
+                trials.append(
+                    {
+                        "policy": candidate,
+                        "success_rate": pass_count / max(1, len(outputs)),
+                        "avg_score": avg_score,
+                        "avg_latency_ms": avg_latency,
+                        "pass_count": pass_count,
+                        "fail_count": fail_count,
+                    }
+                )
+
+            if not trials:
+                raise MechanexError("No auto-tune trials executed.")
+
+            best = sorted(trials, key=lambda t: (t["success_rate"], t["avg_score"], -t["avg_latency_ms"]), reverse=True)[0]
+            return {"best_policy": best["policy"], "best_trial": best, "trials": trials}
+
+        self._require_remote_auth()
+        payload = {
+            "prompts": prompts,
+            "base_policy_id": base_policy_id,
+            "base_policy": base_policy,
+            "search_space": search_space or {},
+            "max_trials": max_trials,
+            "max_new_tokens": max_new_tokens,
+        }
+        return self._post("/policies/autotune", payload)
+
     def _require_remote_auth(self) -> None:
         if not (self._client.api_key or self._client.access_token):
             raise MechanexError(
@@ -188,7 +324,7 @@ class PolicyModule(_BaseModule):
         include_trace: bool,
     ) -> Dict[str, Any]:
         sampling = policy.get("sampling", {}) or {}
-        steering = policy.get("steering", {}) or {}
+        steering = self._apply_steering_preset(policy).get("steering", {}) or {}
         constraints = policy.get("constraints", {}) or {}
         verifiers = policy.get("verifiers", {}) or {}
         optimization = policy.get("optimization", {}) or {}
@@ -203,40 +339,78 @@ class PolicyModule(_BaseModule):
             raise MechanexError("Steering perceptrons are not supported for local policy execution.")
 
         candidate_count = max(1, int(optimization.get("best_of_n", 1)), int(sampling.get("num_candidates", 1)))
-        candidates = []
+        retry_rounds = max(0, int(optimization.get("retry_on_failure", 0)))
+        confidence_retry = bool(optimization.get("confidence_triggered_regeneration", False))
+        confidence_threshold = float(optimization.get("confidence_threshold", 0.5))
+        if confidence_retry:
+            retry_rounds = max(retry_rounds, 1)
 
-        for idx in range(candidate_count):
-            text, latency_ms = self._local_generate_once(
-                prompt=prompt,
-                max_new_tokens=max_new_tokens,
-                sampling=sampling,
-                steering=steering,
-                slot=idx,
-            )
-            tokens = len((text or "").split())
-            constraints_ok, constraint_reason = self._check_constraints(text, constraints)
-            verifier_ok, verifier_score, verifier_reason = self._run_verifiers(text, constraints, verifiers)
-            accepted = constraints_ok and verifier_ok
-            score = verifier_score
-            if not constraints_ok:
-                score -= 1.0
+        candidates: List[Dict[str, Any]] = []
+        retry_events: List[Dict[str, Any]] = []
+        active_sampling = dict(sampling)
 
-            candidates.append(
+        winner: Dict[str, Any] = {
+            "output": "",
+            "accepted": False,
+            "score": 0.0,
+            "latency_ms": 0,
+            "tokens": 0,
+            "constraints_ok": False,
+            "verifier_ok": False,
+            "reason": "no candidates",
+            "sampling_method": method,
+        }
+        for round_idx in range(retry_rounds + 1):
+            round_candidates: List[Dict[str, Any]] = []
+            for idx in range(candidate_count):
+                text, latency_ms = self._local_generate_once(
+                    prompt=prompt,
+                    max_new_tokens=max_new_tokens,
+                    sampling=active_sampling,
+                    steering=steering,
+                    slot=idx,
+                    round_idx=round_idx,
+                )
+                tokens = len((text or "").split())
+                constraints_ok, constraint_reason = self._check_constraints(text, constraints)
+                verifier_ok, verifier_score, verifier_reason = self._run_verifiers(text, constraints, verifiers)
+                accepted = constraints_ok and verifier_ok
+                score = verifier_score
+                if not constraints_ok:
+                    score -= 1.0
+
+                round_candidates.append(
+                    {
+                        "output": text,
+                        "accepted": accepted,
+                        "score": score,
+                        "latency_ms": latency_ms,
+                        "tokens": tokens,
+                        "constraints_ok": constraints_ok,
+                        "verifier_ok": verifier_ok,
+                        "reason": " | ".join([r for r in [constraint_reason, verifier_reason] if r]) or "accepted",
+                        "sampling_method": method,
+                        "round": round_idx,
+                        "slot": idx,
+                    }
+                )
+
+            candidates.extend(round_candidates)
+            accepted = [c for c in candidates if c["accepted"]]
+            winner = sorted(accepted or candidates, key=lambda x: (x["score"], -x["latency_ms"]), reverse=True)[0]
+            needs_confidence_retry = confidence_retry and float(winner.get("score", 0.0)) < confidence_threshold
+            if winner["accepted"] and not needs_confidence_retry:
+                break
+            if round_idx >= retry_rounds:
+                break
+            retry_events.append(
                 {
-                    "output": text,
-                    "accepted": accepted,
-                    "score": score,
-                    "latency_ms": latency_ms,
-                    "tokens": tokens,
-                    "constraints_ok": constraints_ok,
-                    "verifier_ok": verifier_ok,
-                    "reason": " | ".join([r for r in [constraint_reason, verifier_reason] if r]) or "accepted",
-                    "sampling_method": method,
+                    "round": round_idx + 1,
+                    "trigger": "confidence" if needs_confidence_retry else "accepted=false",
+                    "winner_score": winner.get("score", 0.0),
                 }
             )
-
-        accepted = [c for c in candidates if c["accepted"]]
-        winner = sorted(accepted or candidates, key=lambda x: (x["score"], -x["latency_ms"]), reverse=True)[0]
+            active_sampling = self._sampling_for_retry(active_sampling, round_idx + 1)
 
         return {
             "output": winner["output"],
@@ -250,6 +424,7 @@ class PolicyModule(_BaseModule):
             "trace": {
                 "policy_name": policy.get("name"),
                 "candidates": candidates,
+                "retry_events": retry_events,
                 "selection": winner,
             } if include_trace else None,
         }
@@ -261,6 +436,7 @@ class PolicyModule(_BaseModule):
         sampling: Dict[str, Any],
         steering: Optional[Dict[str, Any]] = None,
         slot: int = 0,
+        round_idx: int = 0,
     ) -> Tuple[str, int]:
         local_model = getattr(self._client, "local_model", None)
         if local_model is None:
@@ -270,9 +446,29 @@ class PolicyModule(_BaseModule):
         top_k = sampling.get("top_k", 50)
         top_p = sampling.get("top_p", 0.9)
         temperature = float(sampling.get("temperature", 0.7))
+        if bool(sampling.get("adaptive_temperature")):
+            schedule = sampling.get("adaptive_temperature_schedule") or []
+            temperature = float(
+                self._scheduled_value(
+                    schedule,
+                    index=(round_idx * max(1, int(sampling.get("num_candidates", 1)))) + slot,
+                    default=temperature,
+                )
+            )
         diversity_strength = float(sampling.get("diversity_strength", 0.0) or 0.0)
         if diversity_strength > 0 and slot > 0:
             temperature = min(2.0, max(0.05, temperature + (slot % 3) * 0.1 * diversity_strength))
+
+        top_p = sampling.get("top_p", 0.9)
+        if bool(sampling.get("adaptive_top_p")):
+            p_schedule = sampling.get("adaptive_top_p_schedule") or []
+            top_p = float(
+                self._scheduled_value(
+                    p_schedule,
+                    index=(round_idx * max(1, int(sampling.get("num_candidates", 1)))) + slot,
+                    default=top_p,
+                )
+            )
 
         if method in ("min-p", "typical", "guided-generation"):
             method = "top-p"
@@ -345,6 +541,70 @@ class PolicyModule(_BaseModule):
         text = out if isinstance(out, str) else local_model.to_string(out)[0]
         return text, latency_ms
 
+    def _scheduled_value(self, values: List[Any], index: int, default: float) -> float:
+        if not values:
+            return float(default)
+        if index < 0:
+            index = 0
+        if index >= len(values):
+            index = len(values) - 1
+        try:
+            return float(values[index])
+        except Exception:
+            return float(default)
+
+    def _sampling_for_retry(self, sampling: Dict[str, Any], retry_round: int) -> Dict[str, Any]:
+        out = dict(sampling)
+        out["temperature"] = max(0.05, float(out.get("temperature", 0.7)) - (0.08 * retry_round))
+        if out.get("top_p") is not None:
+            out["top_p"] = max(0.2, float(out.get("top_p", 0.9)) - (0.04 * retry_round))
+        return out
+
+    def _apply_steering_preset(self, policy: Dict[str, Any]) -> Dict[str, Any]:
+        out = json.loads(json.dumps(policy))
+        steering = out.setdefault("steering", {})
+        objective = out.setdefault("objective", {"name": "quality"})
+        verifiers = out.setdefault("verifiers", {})
+        enabled = [str(v).lower() for v in (verifiers.get("enabled") or [])]
+        constraints = out.setdefault("constraints", {})
+        preset = str(steering.get("preset") or "").strip().lower()
+        if not preset:
+            return out
+
+        steering["enabled"] = True
+        strength = float(steering.get("strength", 0.0) or 0.0)
+        if preset == "brevity":
+            steering["strength"] = max(strength, 0.35)
+            if "concise" not in str(objective.get("name", "")).lower():
+                objective["name"] = "concise response quality"
+        elif preset == "truthfulness":
+            steering["strength"] = max(strength, 0.45)
+            if "factuality" not in enabled:
+                enabled.append("factuality")
+        elif preset == "json_compliance":
+            constraints["json_mode"] = True
+            if "syntax" not in enabled:
+                enabled.append("syntax")
+            if constraints.get("json_schema") and "json_schema" not in enabled:
+                enabled.append("json_schema")
+        elif preset == "format_rigidity":
+            steering["strength"] = max(strength, 0.5)
+            if constraints.get("regex_pattern") and "regex" not in enabled:
+                enabled.append("regex")
+        elif preset == "refusal_strength":
+            steering["strength"] = max(strength, 0.65)
+        elif preset == "safety_style":
+            steering["strength"] = max(strength, 0.55)
+            if "factuality" not in enabled:
+                enabled.append("factuality")
+        elif preset == "domain_specific":
+            steering["strength"] = max(strength, 0.4)
+        elif preset == "tone_control":
+            steering["strength"] = max(strength, 0.25)
+
+        verifiers["enabled"] = enabled
+        return out
+
     def _check_constraints(self, text: str, constraints: Dict[str, Any]) -> Tuple[bool, str]:
         if constraints.get("json_mode") or constraints.get("json_schema") or constraints.get("required_fields"):
             ok, obj = self._extract_json(text)
@@ -406,6 +666,23 @@ class PolicyModule(_BaseModule):
                 score -= 0.4
                 reasons.append("regex_verifier: pattern mismatch")
 
+        if "code_compile" in enabled:
+            ok, err = self._code_compile_check(text, verifiers.get("code_language", "python"))
+            if not ok:
+                score -= 0.8
+                reasons.append(f"code_compile_verifier: {err}")
+
+        if "unit_tests" in enabled and verifiers.get("code_unit_tests"):
+            ok, err = self._code_unit_test_check(
+                text=text,
+                language=verifiers.get("code_language", "python"),
+                tests=verifiers.get("code_unit_tests") or [],
+                timeout_ms=int(verifiers.get("unit_test_timeout_ms", 1500)),
+            )
+            if not ok:
+                score -= 0.9
+                reasons.append(f"unit_tests_verifier: {err}")
+
         return score >= 0.5, score, " | ".join(reasons)
 
     def _extract_json(self, text: str) -> Tuple[bool, Dict[str, Any]]:
@@ -460,6 +737,52 @@ class PolicyModule(_BaseModule):
                 return False
             cursor = idx + len(token)
         return True
+
+    def _extract_code_text(self, text: str) -> str:
+        txt = (text or "").strip()
+        block = re.search(r"```[a-zA-Z0-9_+-]*\n(.*?)```", txt, flags=re.DOTALL)
+        if block:
+            return block.group(1).strip()
+        return txt
+
+    def _code_compile_check(self, text: str, language: str = "python") -> Tuple[bool, str]:
+        lang = (language or "python").strip().lower()
+        if lang != "python":
+            return False, f"unsupported language '{language}'"
+        code = self._extract_code_text(text)
+        try:
+            compile(code, "<candidate>", "exec")
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+
+    def _code_unit_test_check(
+        self,
+        text: str,
+        language: str,
+        tests: List[str],
+        timeout_ms: int,
+    ) -> Tuple[bool, str]:
+        lang = (language or "python").strip().lower()
+        if lang != "python":
+            return False, f"unsupported language '{language}'"
+        code = self._extract_code_text(text)
+        runner = [sys.executable, "-I", "-c", code + "\n\n" + "\n\n".join(tests)]
+        try:
+            result = subprocess.run(
+                runner,
+                capture_output=True,
+                text=True,
+                timeout=max(0.1, timeout_ms / 1000.0),
+            )
+        except subprocess.TimeoutExpired:
+            return False, "unit tests timed out"
+        except Exception as exc:
+            return False, str(exc)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or "unit tests failed").strip()
+            return False, err[:500]
+        return True, ""
 
     @staticmethod
     def strict_json_extraction(
@@ -532,4 +855,22 @@ class PolicyModule(_BaseModule):
             "constraints": {},
             "verifiers": {"enabled": ["factuality"], "repair_on_failure": False},
             "optimization": {"best_of_n": 1},
+        }
+
+    @staticmethod
+    def steering_preset(
+        preset: str,
+        name: Optional[str] = None,
+        sampling_method: str = "top-k",
+    ) -> Dict[str, Any]:
+        preset_name = (preset or "brevity").strip().lower()
+        return {
+            "name": name or f"steering_{preset_name}",
+            "task_profile": {"name": "Steering preset policy"},
+            "objective": {"name": "quality"},
+            "sampling": {"method": sampling_method, "temperature": 0.7, "top_p": 0.9},
+            "steering": {"enabled": True, "preset": preset_name, "strength": 0.35},
+            "constraints": {},
+            "verifiers": {"enabled": []},
+            "optimization": {"best_of_n": 1, "retry_on_failure": 1},
         }
