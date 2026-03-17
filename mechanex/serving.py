@@ -99,9 +99,9 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                     }
                 ],
                 "usage": {
-                    "prompt_tokens": len(prompt.split()), # Mock
-                    "completion_tokens": len(str(output).split()), # Mock
-                    "total_tokens": 0 # Mock
+                    "prompt_tokens": len(prompt.split()),
+                    "completion_tokens": len(str(output).split()),
+                    "total_tokens": len(prompt.split()) + len(str(output).split())
                 }
             }
         except Exception as e:
@@ -170,7 +170,12 @@ def create_app(client, model=None, vllm_engine=None, corrected_behaviors=None):
                         "logprobs": None,
                         "finish_reason": "length"
                     }
-                ]
+                ],
+                "usage": {
+                    "prompt_tokens": len(prompt.split()),
+                    "completion_tokens": len(str(output).split()),
+                    "total_tokens": len(prompt.split()) + len(str(output).split())
+                }
             }
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": {"message": str(e), "type": "server_error"}})

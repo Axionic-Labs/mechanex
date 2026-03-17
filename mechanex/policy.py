@@ -84,6 +84,8 @@ class PolicyModule(_BaseModule):
             "max_new_tokens": max_new_tokens,
             "include_trace": include_trace,
         }
+        # Filter out None values (Fixes BUG-2 in manual report)
+        payload = {k: v for k, v in payload.items() if v is not None}
         return self._post("/policies/run", payload)
 
     def compare(
@@ -154,6 +156,8 @@ class PolicyModule(_BaseModule):
             "policy": policy,
             "max_new_tokens": max_new_tokens,
         }
+        # Filter out None values
+        payload = {k: v for k, v in payload.items() if v is not None}
         return self._post("/policies/evaluate", payload)
 
     def _require_remote_auth(self) -> None:

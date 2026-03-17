@@ -19,7 +19,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    DEFAULT_BACKEND_URL = "https://axionic-backend-prod-594546489999.us-east4.run.app"
+    DEFAULT_BACKEND_URL = "https://axionic-mvp-backend-594546489999.us-east4.run.app"
 
     def __init__(self, base_url: Optional[str] = None, local_model=None):
         resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL
@@ -180,23 +180,40 @@ class Mechanex:
     def _get_headers(self, endpoint: str = "") -> dict:
         """
         Return headers including Authorization (JWT) or x-api-key.
-        Prioritizes API Key for inference, JWT for management.
+        Uses route-aware auth (BUG-5): management endpoints prefer JWT,
+        inference endpoints prefer API key. Only sends ONE auth mechanism.
         """
         headers = {}
         authenticated = False
-      
-        if self.api_key:
+
+        is_management = (
+            endpoint.startswith("/auth/")
+            or endpoint.startswith("/payments/")
+            or endpoint.startswith("/waitlist/")
+        )
+
+        # IDENTITY VERIFICATION FIX (BUG-3): 
+        # For verification calls like whoami, if an API key is set, we MUST use it 
+        # to ensure it's valid. Otherwise, JWT might mask a bad API key.
+        if endpoint == "/auth/whoami" and self.api_key:
             headers["x-api-key"] = self.api_key
             authenticated = True
-        if self.access_token:
-                # Fallback to JWT if allowed (some dev modes allow it)
-                headers["Authorization"] = f"Bearer {self.access_token}"
-                authenticated = True
-   
+        elif is_management and self.access_token:
+            # Management endpoints prefer JWT
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+        elif self.api_key:
+            # Inference endpoints (or management without JWT) prefer API key
+            headers["x-api-key"] = self.api_key
+            authenticated = True
+        elif self.access_token:
+            # Fallback to JWT if no API key
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+
         if not authenticated:
-            # Raise error to be helpful
             raise MechanexError("Authentication required. Please provide an API key or log in.")
-            
+
         return headers
     
     def _refresh_session(self):
@@ -243,7 +260,7 @@ class Mechanex:
     def _post(self, endpoint: str, data: dict = None) -> dict:
         """Internal helper for POST requests with auth."""
         try:
-            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint))
+            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint), timeout=60)
             
             # Handle 401 with refresh retry
             if response.status_code == 401 and self._refresh_session():
@@ -526,6 +543,10 @@ class Mechanex:
         
         return self
 
+    def check_waitlist(self, email: str) -> dict:
+        """Check if an email is approved for platform access."""
+        return self._get(f"/waitlist/check?email={email}")
+
     @staticmethod
     def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:
         """
@@ -533,7 +554,8 @@ class Mechanex:
         This is a static method and does not require a model to be loaded.
         """
         try:
-            response = requests.get(f"{host}/models")
+            url = host if host.startswith("http") else f"http://{host}:{port}"
+            response = requests.get(f"{url}/models")
             response.raise_for_status()
             return response.json().get("models", [])
         except requests.exceptions.RequestException as e:
@@ -576,5 +598,8 @@ class Mechanex:
             return NotFoundError(f"Resource not found: {message}", status_code, details)
         elif status_code == 422:
             return ValidationError(f"Validation error: {message}", status_code, details)
+        elif status_code == 429:
+            from .errors import RateLimitError
+            return RateLimitError(f"Rate limit exceeded: {message}", status_code, details)
         else:
             return APIError(f"{default_message}: {message}" if message != default_message else message, status_code, details)

@@ -151,6 +151,19 @@ def login(obj, email, password):
             save_config(obj)
             
             mx.set_token(access_token, refresh_token=refresh_token)
+
+            # Fetch and save the user's default API key
+            try:
+                keys = mx.list_api_keys()
+                keys_list = keys if isinstance(keys, list) else keys.get("keys", [])
+                if keys_list:
+                    default_key = keys_list[0].get("key") or keys_list[0].get("api_key")
+                    if default_key:
+                        obj["api_key"] = default_key
+                        mx.set_key(default_key)
+                        save_config(obj)
+            except Exception:
+                pass  # JWT auth will still work
             
             console.print(Panel("[bold green]Successfully logged in![/bold green]\nSession tokens saved to ~/.mechanex/config.json", title="Welcome"))
             
@@ -227,7 +240,7 @@ def create_api_key(name):
 def whoami():
     """Show the current logged-in user and profile info."""
     config = load_config()
-    if "api_key" in config:
+    if "api_key" in config or "access_token" in config:
         try:
             # Try new whoami endpoint
             user = mx.whoami()
@@ -414,6 +427,23 @@ def topup():
         else:
             console.print("[red]Invalid selection.[/red]")
 
+    except Exception as e:
+        console.print(f"[bold red]Error:[/bold red] {str(e)}")
+
+@main.command()
+@click.option('--port', default=8000, type=int, help='Port to run the server on.')
+@click.option('--host', default='0.0.0.0', help='Host to bind to.')
+@click.option('--use-vllm', is_flag=True, default=False, help='Use vLLM engine for serving.')
+def serve(port, host, use_vllm):
+    """Start an OpenAI-compatible server that proxies to the Axionic backend."""
+    try:
+        console.print(Panel(
+            f"Starting server on [bold cyan]{host}:{port}[/bold cyan]\n"
+            f"OpenAI endpoint: [bold blue]http://{host}:{port}/v1/chat/completions[/bold blue]",
+            title="Mechanex Server",
+            border_style="green"
+        ))
+        mx.serve(host=host, port=port, use_vllm=use_vllm)
     except Exception as e:
         console.print(f"[bold red]Error:[/bold red] {str(e)}")
 

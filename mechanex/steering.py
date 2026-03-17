@@ -121,7 +121,7 @@ class FewShot(SteeringVectorMethod):
 
 class SteeringModule(_BaseModule):
     """Module for steering vector APIs."""
-    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> str:
+    def generate_vectors(self, prompts: List[str], positive_answers: List[str], negative_answers: List[str], layer_idxs: Optional[List[int]] = None, method: str = "few-shot", name: Optional[str] = None, label: Optional[str] = None) -> str:
         """
         Computes and stores steering vectors from prompts.
         Corresponds to the /steering/generate endpoint.
@@ -141,7 +141,9 @@ class SteeringModule(_BaseModule):
                 "positive_answers": positive_answers,
                 "negative_answers": negative_answers,
                 "layer_idxs": layer_idxs,
-                "method": method
+                "method": method,
+                "name": name,
+                "label": label
             })
             if "steering_vector_id" not in resp or resp["steering_vector_id"] is None:
                 raise MechanexError(f"Steering vector ID not found in response: {resp}")
@@ -197,7 +199,29 @@ class SteeringModule(_BaseModule):
         Saves steering vectors to a file.
         """
         if isinstance(vectors_or_id, str):
-            vectors = self.get_vectors(vectors_or_id)
+            # Try local first
+            local_vectors = getattr(self._client, '_local_vectors', {}).get(vectors_or_id)
+            if local_vectors is not None:
+                vectors = local_vectors
+            else:
+                # Try to download from backend
+                try:
+                    print(f"Downloading remote steering vector '{vectors_or_id}'...")
+                    resp = self._get(f"/steering/vectors/{vectors_or_id}/download")
+                    # Backend returns serializable dict {layer_key: [weights]}
+                    # Reconstruct it as tensors, trying to convert keys to int where possible
+                    vectors = {}
+                    for k, v in resp.items():
+                        try:
+                            key = int(k)
+                        except (ValueError, TypeError):
+                            key = k
+                        vectors[key] = torch.tensor(v)
+                except Exception as e:
+                    raise MechanexError(
+                        f"Steering vector '{vectors_or_id}' not found in local session "
+                        f"and could not be downloaded from remote: {e}"
+                    )
         else:
             vectors = vectors_or_id
         
@@ -221,6 +245,69 @@ class SteeringModule(_BaseModule):
         print(f"Steering vectors loaded from {path}")
         return vectors
             
+    def generate_pairs(
+        self,
+        persona_name: str,
+        persona_description: str = "",
+        num_pairs: int = 50,
+        batch_size: int = 5,
+    ) -> Dict:
+        """
+        Generate contrastive pairs for steering vector creation.
+        Uses the backend's /steering/generate-pairs endpoint.
+
+        Args:
+            persona_name: Name of the persona/behavior to generate pairs for.
+            persona_description: Optional description of the persona.
+            num_pairs: Number of contrastive pairs to generate.
+            batch_size: Batch size for pair generation.
+
+        Returns:
+            Dict with persona, total_pairs, pairs, and avg_final_score.
+        """
+        return self._post("/steering/generate-pairs", {
+            "persona_name": persona_name,
+            "persona_description": persona_description,
+            "num_pairs": num_pairs,
+            "batch_size": batch_size,
+        })
+
+    def evaluate(
+        self,
+        steering_vector_id: str,
+        positive_texts: List[str],
+        negative_texts: List[str],
+        test_prompts: Optional[List[str]] = None,
+        persona_description: Optional[str] = None,
+        strength: float = 1.0,
+    ) -> Dict:
+        """
+        Evaluate a steering vector's effectiveness.
+        Uses the backend's /steering/evaluate endpoint.
+
+        Args:
+            steering_vector_id: ID of the steering vector to evaluate.
+            positive_texts: List of texts representing the desired behavior.
+            negative_texts: List of texts representing the undesired behavior.
+            test_prompts: Optional list of prompts to test steering on.
+            persona_description: Optional description for the judge model.
+            strength: Steering multiplier strength.
+
+        Returns:
+            Dict with cosine_metrics and optional judge_evaluation.
+        """
+        payload = {
+            "steering_vector_id": steering_vector_id,
+            "positive_texts": positive_texts,
+            "negative_texts": negative_texts,
+            "multiplier": strength,
+        }
+        if test_prompts is not None:
+            payload["test_prompts"] = test_prompts
+        if persona_description is not None:
+            payload["persona_description"] = persona_description
+        return self._post("/steering/evaluate", payload)
+
     def generate_from_jsonl(self, dataset_path: str, layer_idxs: Optional[List[int]] = None, method: str = "few-shot") -> str:
         """
         A helper to generate steering vectors from a .jsonl file.

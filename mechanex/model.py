@@ -1,3 +1,4 @@
+import warnings
 from typing import List, Dict, Any
 from .base import _BaseModule
 
@@ -11,10 +12,19 @@ class ModelModule(_BaseModule):
         response = self._get("/graph")
         return response.get("graph", [])
 
+    def graph(self) -> List[Dict[str, Any]]:
+        """Alias for get_graph()."""
+        return self.get_graph()
+
     def get_paths(self) -> List[str]:
         """
         Retrieves all available layer paths in the model.
-        Corresponds to the /paths endpoint.
+        Derives paths from the /graph endpoint since /paths is not available.
         """
-        response = self._get("/paths")
-        return response.get("paths", [])
+        warnings.warn(
+            "get_paths() is deprecated. Use get_graph() to inspect model structure.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        graph = self.get_graph()
+        return [node.get("name", "") for node in graph if isinstance(node, dict) and "name" in node]
