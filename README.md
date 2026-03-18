@@ -132,6 +132,7 @@ Supported methods:
 Supported vector-generation modes:
 - `caa`
 - `few-shot`
+- 'perceptrons'
 
 ### Constraints and Verifiers
 
