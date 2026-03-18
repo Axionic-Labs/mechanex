@@ -1,6 +1,9 @@
 # Mechanex Examples and Use Cases
 
-This folder contains runnable examples for local-first and remote policy runtime workflows.
+This folder contains runnable policy-first workflows for:
+- Local small-model runtime control.
+- Hosted remote inference/runtime control.
+- Hybrid local/remote execution routing.
 
 ## Prerequisites
 
@@ -10,6 +13,12 @@ This folder contains runnable examples for local-first and remote policy runtime
   - `MECHANEX_API_KEY`
 - For local examples:
   - A local model loaded via `mx.load_model(...)` (requires `transformer-lens`).
+
+## Capability Notes
+
+- ADS is remote-only.
+- Steering perceptrons are remote-only.
+- Other policy controls run locally with capability-aware fallback behavior.
 
 ## Example Catalog
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from .base import _BaseModule
+from .errors import MechanexError
 
 
 class GenerationModule(_BaseModule):
@@ -26,6 +27,14 @@ class GenerationModule(_BaseModule):
         draft_model: Optional[str] = None,
         ensemble_models: Optional[List[str]] = None,
         best_of_n: int = 1,
+        adaptive_temperature: bool = False,
+        adaptive_temperature_schedule: Optional[List[float]] = None,
+        adaptive_top_p: bool = False,
+        adaptive_top_p_schedule: Optional[List[float]] = None,
+        steering_preset: Optional[str] = None,
+        confidence_triggered_regeneration: bool = False,
+        confidence_threshold: float = 0.5,
+        code_unit_tests: Optional[List[str]] = None,
         policy: Optional[Dict[str, Any]] = None,
         policy_id: Optional[str] = None,
         include_trace: bool = False,
@@ -55,13 +64,19 @@ class GenerationModule(_BaseModule):
             or draft_model is not None
             or bool(ensemble_models)
             or best_of_n > 1
+            or adaptive_temperature
+            or bool(adaptive_temperature_schedule)
+            or adaptive_top_p
+            or bool(adaptive_top_p_schedule)
+            or steering_preset is not None
+            or confidence_triggered_regeneration
+            or bool(code_unit_tests)
         )
         use_local = self._client.should_use_local()
 
         try:
             if not use_local:
                 if not (self._client.api_key or self._client.access_token):
-                    from .errors import MechanexError
                     raise MechanexError(
                         "Remote execution requires authentication. "
                         "Use mx.set_key(...) or mx.set_execution_mode('local')."
@@ -84,6 +99,14 @@ class GenerationModule(_BaseModule):
                         steering_vector=steering_vector,
                         steering_strength=steering_strength,
                         best_of_n=best_of_n,
+                        adaptive_temperature=adaptive_temperature,
+                        adaptive_temperature_schedule=adaptive_temperature_schedule,
+                        adaptive_top_p=adaptive_top_p,
+                        adaptive_top_p_schedule=adaptive_top_p_schedule,
+                        steering_preset=steering_preset,
+                        confidence_triggered_regeneration=confidence_triggered_regeneration,
+                        confidence_threshold=confidence_threshold,
+                        code_unit_tests=code_unit_tests,
                     )
                     payload = {
                         "prompt": prompt,
@@ -125,6 +148,14 @@ class GenerationModule(_BaseModule):
                         steering_vector=steering_vector,
                         steering_strength=steering_strength,
                         best_of_n=best_of_n,
+                        adaptive_temperature=adaptive_temperature,
+                        adaptive_temperature_schedule=adaptive_temperature_schedule,
+                        adaptive_top_p=adaptive_top_p,
+                        adaptive_top_p_schedule=adaptive_top_p_schedule,
+                        steering_preset=steering_preset,
+                        confidence_triggered_regeneration=confidence_triggered_regeneration,
+                        confidence_threshold=confidence_threshold,
+                        code_unit_tests=code_unit_tests,
                     )
                     response = self._client.policy.run(
                         prompt=prompt,
@@ -167,6 +198,14 @@ class GenerationModule(_BaseModule):
         steering_vector,
         steering_strength: float,
         best_of_n: int,
+        adaptive_temperature: bool = False,
+        adaptive_temperature_schedule: Optional[List[float]] = None,
+        adaptive_top_p: bool = False,
+        adaptive_top_p_schedule: Optional[List[float]] = None,
+        steering_preset: Optional[str] = None,
+        confidence_triggered_regeneration: bool = False,
+        confidence_threshold: float = 0.5,
+        code_unit_tests: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         method = sampling_method
         if ensemble_models:
@@ -199,14 +238,31 @@ class GenerationModule(_BaseModule):
             sampling["draft_model"] = draft_model
         if ensemble_models:
             sampling["ensemble_models"] = ensemble_models
+        if adaptive_temperature:
+            sampling["adaptive_temperature"] = True
+        if adaptive_temperature_schedule:
+            sampling["adaptive_temperature_schedule"] = adaptive_temperature_schedule
+            sampling["adaptive_temperature"] = True
+        if adaptive_top_p:
+            sampling["adaptive_top_p"] = True
+        if adaptive_top_p_schedule:
+            sampling["adaptive_top_p_schedule"] = adaptive_top_p_schedule
+            sampling["adaptive_top_p"] = True
 
         verifiers = {"enabled": [], "repair_on_failure": True}
         if json_schema is not None:
             verifiers["enabled"] = ["syntax", "json_schema"]
         elif regex_pattern is not None:
             verifiers["enabled"] = ["regex"]
+        if code_unit_tests:
+            verifiers["enabled"] = list(dict.fromkeys([*verifiers["enabled"], "unit_tests"]))
+            verifiers["code_language"] = "python"
+            verifiers["code_unit_tests"] = code_unit_tests
 
         steering: Dict[str, Any] = {"enabled": False, "strength": steering_strength}
+        if steering_preset:
+            steering["preset"] = steering_preset
+            steering["enabled"] = True
         if isinstance(steering_vector, str):
             steering["enabled"] = True
             steering["vector_id"] = steering_vector
@@ -223,7 +279,11 @@ class GenerationModule(_BaseModule):
             "steering": steering,
             "constraints": constraints,
             "verifiers": verifiers,
-            "optimization": {"best_of_n": max(1, best_of_n)},
+            "optimization": {
+                "best_of_n": max(1, best_of_n),
+                "confidence_triggered_regeneration": confidence_triggered_regeneration,
+                "confidence_threshold": confidence_threshold,
+            },
         }
 
     def _local_generate(
@@ -239,16 +299,13 @@ class GenerationModule(_BaseModule):
     ) -> str:
         local_model = getattr(self._client, "local_model", None)
         if local_model is None:
-            from .errors import MechanexError
             raise MechanexError("No local model available for fallback.")
 
         if sampling_method in ("ads", "adaptive-determinantal-sampling"):
-            from .errors import MechanexError
             raise MechanexError("ADS is not supported for local execution.")
 
         supported_local_methods = ["top-k", "top-p", "greedy", "min-p", "typical", None]
         if sampling_method not in supported_local_methods:
-            from .errors import MechanexError
             raise MechanexError(f"Sampling method '{sampling_method}' is not supported for local models.")
 
         import torch
