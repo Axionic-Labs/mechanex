@@ -5,7 +5,7 @@ from typing import Iterable, List
 from mechanex import Mechanex
 
 
-DEFAULT_BASE_URL = "https://axionic-backend-prod-594546489999.us-east4.run.app"
+DEFAULT_BASE_URL = "https://axionic-mvp-backend-594546489999.us-east4.run.app"
 
 
 def require_env(keys: Iterable[str]) -> None:
