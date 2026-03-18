@@ -234,14 +234,21 @@ class SteeringModule(_BaseModule):
             json.dump(serializable, f)
         print(f"Steering vectors saved to {path}")
 
-    def load_vectors(self, path: str) -> Dict[int, torch.Tensor]:
+    def load_vectors(self, path: str) -> dict:
         """
         Loads steering vectors from a file and returns them as a dictionary.
+        Keys are int when possible (local vectors), otherwise string (remote layer paths).
         """
         with open(path, 'r') as f:
             data = json.load(f)
-        
-        vectors = {int(layer): torch.tensor(vec) for layer, vec in data.items()}
+
+        def _parse_key(k):
+            try:
+                return int(k)
+            except ValueError:
+                return k
+
+        vectors = {_parse_key(layer): torch.tensor(vec) for layer, vec in data.items()}
         print(f"Steering vectors loaded from {path}")
         return vectors
             
