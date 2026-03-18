@@ -305,9 +305,9 @@ class SAEModule(_BaseModule):
 
             fwd_hooks.append((hook_name, sae_hook))
 
-        output = local_model.generate(
-            prompt,
-            max_new_tokens=max_new_tokens,
-            fwd_hooks=fwd_hooks
-        )
+        if fwd_hooks:
+            with local_model.hooks(fwd_hooks=fwd_hooks):
+                output = local_model.generate(prompt, max_new_tokens=max_new_tokens)
+        else:
+            output = local_model.generate(prompt, max_new_tokens=max_new_tokens)
         return output if isinstance(output, str) else local_model.to_string(output)[0]
