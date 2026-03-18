@@ -140,17 +140,21 @@ class Mechanex:
         """Get current user information. Also verifies API key if one is set."""
         user = self._get("/auth/whoami")
 
-        # Verify API key separately (uses inference auth path)
+        # Verify API key separately using a lightweight inference-path endpoint
+        # /graph uses verify_api_key on the backend, so it actually tests the key
         if self.api_key:
             try:
-                self._get("/auth/api-keys/balance")
+                headers = {"x-api-key": self.api_key}
+                resp = requests.get(f"{self.base_url}/graph", headers=headers, timeout=5)
+                if resp.status_code == 401:
+                    import warnings
+                    warnings.warn(
+                        "Your API key may be invalid or revoked. "
+                        "Run `mechanex list-api-keys` to check.",
+                        stacklevel=2,
+                    )
             except Exception:
-                import warnings
-                warnings.warn(
-                    "Your API key may be invalid or revoked. "
-                    "Run `mechanex list-api-keys` to check.",
-                    stacklevel=2,
-                )
+                pass  # Network error — skip validation silently
 
         return user
         

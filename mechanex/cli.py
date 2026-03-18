@@ -152,16 +152,39 @@ def login(obj, email, password):
             
             mx.set_token(access_token, refresh_token=refresh_token)
 
-            # Fetch and save the user's default API key
+            # Fetch and save the user's API key
             try:
                 keys = mx.list_api_keys()
                 keys_list = keys if isinstance(keys, list) else keys.get("keys", [])
                 if keys_list:
-                    default_key = keys_list[0].get("key") or keys_list[0].get("api_key")
-                    if default_key:
-                        obj["api_key"] = default_key
-                        mx.set_key(default_key)
+                    if len(keys_list) == 1:
+                        selected = keys_list[0]
+                    else:
+                        # Show keys and let user pick
+                        console.print(f"\n[cyan]You have {len(keys_list)} API keys:[/cyan]")
+                        for i, k in enumerate(keys_list, 1):
+                            name = k.get("name") or "(unnamed)"
+                            key_val = k.get("key") or k.get("api_key", "")
+                            hint = key_val[:6] + "..." + key_val[-4:] if len(key_val) > 12 else key_val
+                            console.print(f"  {i}. {name} ({hint})")
+                        choice = click.prompt(
+                            f"Select a key (1-{len(keys_list)})",
+                            type=int,
+                            default=1,
+                        )
+                        if 1 <= choice <= len(keys_list):
+                            selected = keys_list[choice - 1]
+                        else:
+                            selected = keys_list[0]
+                            console.print(f"[yellow]Invalid choice, using first key.[/yellow]")
+
+                    selected_key = selected.get("key") or selected.get("api_key")
+                    selected_name = selected.get("name") or "(unnamed)"
+                    if selected_key:
+                        obj["api_key"] = selected_key
+                        mx.set_key(selected_key)
                         save_config(obj)
+                        console.print(f"Using API key: [bold]{selected_name}[/bold]")
             except Exception:
                 pass  # JWT auth will still work
             
