@@ -25,7 +25,7 @@ class PolicyModule(_BaseModule):
     """
 
     def save(self, policy: Dict[str, Any]) -> str:
-        if self._use_local():
+        if self._use_local(require_model=False):
             pid = policy.get("id") or str(uuid.uuid4())
             payload = dict(policy)
             payload["id"] = pid
@@ -40,7 +40,7 @@ class PolicyModule(_BaseModule):
         return policy_id
 
     def list(self) -> List[Dict[str, Any]]:
-        if self._use_local():
+        if self._use_local(require_model=False):
             return list(self._client._local_policies.values())
 
         self._require_remote_auth()
@@ -48,7 +48,7 @@ class PolicyModule(_BaseModule):
         return resp if isinstance(resp, list) else resp.get("policies", [])
 
     def get(self, policy_id: str) -> Dict[str, Any]:
-        if self._use_local():
+        if self._use_local(require_model=False):
             item = self._client._local_policies.get(policy_id)
             if item is None:
                 raise MechanexError(f"Policy '{policy_id}' not found in local session.")
@@ -171,7 +171,7 @@ class PolicyModule(_BaseModule):
         tags: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> str:
-        if self._use_local():
+        if self._use_local(require_model=False):
             preset_id = str(uuid.uuid4())
             self._client._local_policy_presets[preset_id] = {
                 "id": preset_id,
@@ -198,7 +198,7 @@ class PolicyModule(_BaseModule):
         return preset_id
 
     def list_presets(self, include_public: bool = True) -> List[Dict[str, Any]]:
-        if self._use_local():
+        if self._use_local(require_model=False):
             return list(self._client._local_policy_presets.values())
 
         self._require_remote_auth()
@@ -207,7 +207,7 @@ class PolicyModule(_BaseModule):
         return resp if isinstance(resp, list) else []
 
     def clone_preset(self, preset_id: str) -> str:
-        if self._use_local():
+        if self._use_local(require_model=False):
             preset = self._client._local_policy_presets.get(preset_id)
             if not preset:
                 raise MechanexError(f"Preset '{preset_id}' not found in local session.")
@@ -303,8 +303,8 @@ class PolicyModule(_BaseModule):
                 "or switch to local mode with mx.set_execution_mode('local')."
             )
 
-    def _use_local(self) -> bool:
-        return self._client.should_use_local()
+    def _use_local(self, require_model: bool = True) -> bool:
+        return self._client.should_use_local(require_model=require_model)
 
     def _resolve_local_policy(self, policy: Optional[Dict[str, Any]], policy_id: Optional[str]) -> Dict[str, Any]:
         if policy is not None:

@@ -75,12 +75,16 @@ class Mechanex:
         self.execution_mode = normalized
         return self
 
-    def should_use_local(self) -> bool:
+    def should_use_local(self, require_model: bool = True) -> bool:
         """
         Resolve execution target based on explicit mode and available resources.
+
+        Args:
+            require_model: If True (default), raises when mode is 'local' but no
+                model is loaded.  Pass False for non-inference operations (CRUD).
         """
         if self.execution_mode == "local":
-            if self.local_model is None:
+            if require_model and self.local_model is None:
                 raise MechanexError("Execution mode is 'local' but no local model is loaded.")
             return True
 
@@ -133,8 +137,26 @@ class Mechanex:
         return res
 
     def whoami(self):
-        """Get current user information."""
-        return self._get("/auth/whoami")
+        """Get current user information. Also verifies API key if one is set."""
+        user = self._get("/auth/whoami")
+
+        # Verify API key separately using a lightweight inference-path endpoint
+        # /graph uses verify_api_key on the backend, so it actually tests the key
+        if self.api_key:
+            try:
+                headers = {"x-api-key": self.api_key}
+                resp = requests.get(f"{self.base_url}/graph", headers=headers, timeout=5)
+                if resp.status_code == 401:
+                    import warnings
+                    warnings.warn(
+                        "Your API key may be invalid or revoked. "
+                        "Run `mechanex list-api-keys` to check.",
+                        stacklevel=2,
+                    )
+            except Exception:
+                pass  # Network error — skip validation silently
+
+        return user
         
     def get_subscription_products(self):
         """List available subscription products and prices from Stripe."""
@@ -193,13 +215,7 @@ class Mechanex:
             or endpoint.startswith("/waitlist/")
         )
 
-        # IDENTITY VERIFICATION FIX (BUG-3): 
-        # For verification calls like whoami, if an API key is set, we MUST use it 
-        # to ensure it's valid. Otherwise, JWT might mask a bad API key.
-        if endpoint == "/auth/whoami" and self.api_key:
-            headers["x-api-key"] = self.api_key
-            authenticated = True
-        elif is_management and self.access_token:
+        if is_management and self.access_token:
             # Management endpoints prefer JWT
             headers["Authorization"] = f"Bearer {self.access_token}"
             authenticated = True
