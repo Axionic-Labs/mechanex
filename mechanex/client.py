@@ -1,7 +1,9 @@
 import requests
 import torch
 import numpy as np
-from typing import Optional, List
+import json
+import os
+from typing import Optional, List, Dict, Any
 
 from .errors import MechanexError
 from .attribution import AttributionModule
@@ -11,21 +13,28 @@ from .generation import GenerationModule
 from .model import ModelModule
 from .base import _BaseModule
 from .sae import SAEModule
+from .policy import PolicyModule
 
 class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    def __init__(self, base_url: str = "https://api.axioniclabs.ai", local_model=None):
-        self.base_url = base_url
+    DEFAULT_BACKEND_URL = "https://axionic-mvp-backend-594546489999.us-east4.run.app"
+
+    def __init__(self, base_url: Optional[str] = None, local_model=None):
+        resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL
+        self.base_url = resolved_base_url.rstrip("/")
         self.local_model = local_model
         self._local_vectors = {}
         self._local_behaviors = {}
+        self._local_policies = {}
+        self._local_policy_presets = {}
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None
         self.access_token = None
         self.refresh_token = None
+        self.execution_mode = "auto"
 
         # Try to load credentials from config file
         try:
@@ -51,6 +60,41 @@ class Mechanex:
         self.generation = GenerationModule(self)
         self.model = ModelModule(self)
         self.sae = SAEModule(self)
+        self.policy = PolicyModule(self)
+
+    def set_execution_mode(self, mode: str = "auto") -> 'Mechanex':
+        """
+        Controls runtime routing:
+        - auto: remote when authenticated, otherwise local if model is loaded
+        - remote: force API execution
+        - local: force local execution
+        """
+        normalized = (mode or "").strip().lower()
+        if normalized not in ("auto", "remote", "local"):
+            raise MechanexError("Execution mode must be one of: auto, remote, local")
+        self.execution_mode = normalized
+        return self
+
+    def should_use_local(self, require_model: bool = True) -> bool:
+        """
+        Resolve execution target based on explicit mode and available resources.
+
+        Args:
+            require_model: If True (default), raises when mode is 'local' but no
+                model is loaded.  Pass False for non-inference operations (CRUD).
+        """
+        if self.execution_mode == "local":
+            if require_model and self.local_model is None:
+                raise MechanexError("Execution mode is 'local' but no local model is loaded.")
+            return True
+
+        if self.execution_mode == "remote":
+            return False
+
+        # auto mode
+        if self.local_model is not None and not (self.api_key or self.access_token):
+            return True
+        return False
 
     def signup(self, email, password):
         """Register a new user."""
@@ -93,8 +137,26 @@ class Mechanex:
         return res
 
     def whoami(self):
-        """Get current user information."""
-        return self._get("/auth/whoami")
+        """Get current user information. Also verifies API key if one is set."""
+        user = self._get("/auth/whoami")
+
+        # Verify API key separately using a lightweight inference-path endpoint
+        # /graph uses verify_api_key on the backend, so it actually tests the key
+        if self.api_key:
+            try:
+                headers = {"x-api-key": self.api_key}
+                resp = requests.get(f"{self.base_url}/graph", headers=headers, timeout=5)
+                if resp.status_code == 401:
+                    import warnings
+                    warnings.warn(
+                        "Your API key may be invalid or revoked. "
+                        "Run `mechanex list-api-keys` to check.",
+                        stacklevel=2,
+                    )
+            except Exception:
+                pass  # Network error — skip validation silently
+
+        return user
         
     def get_subscription_products(self):
         """List available subscription products and prices from Stripe."""
@@ -141,23 +203,34 @@ class Mechanex:
     def _get_headers(self, endpoint: str = "") -> dict:
         """
         Return headers including Authorization (JWT) or x-api-key.
-        Prioritizes API Key for inference, JWT for management.
+        Uses route-aware auth (BUG-5): management endpoints prefer JWT,
+        inference endpoints prefer API key. Only sends ONE auth mechanism.
         """
         headers = {}
         authenticated = False
-      
-        if self.api_key:
+
+        is_management = (
+            endpoint.startswith("/auth/")
+            or endpoint.startswith("/payments/")
+            or endpoint.startswith("/waitlist/")
+        )
+
+        if is_management and self.access_token:
+            # Management endpoints prefer JWT
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+        elif self.api_key:
+            # Inference endpoints (or management without JWT) prefer API key
             headers["x-api-key"] = self.api_key
             authenticated = True
-        if self.access_token:
-                # Fallback to JWT if allowed (some dev modes allow it)
-                headers["Authorization"] = f"Bearer {self.access_token}"
-                authenticated = True
-   
+        elif self.access_token:
+            # Fallback to JWT if no API key
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+
         if not authenticated:
-            # Raise error to be helpful
             raise MechanexError("Authentication required. Please provide an API key or log in.")
-            
+
         return headers
     
     def _refresh_session(self):
@@ -204,7 +277,7 @@ class Mechanex:
     def _post(self, endpoint: str, data: dict = None) -> dict:
         """Internal helper for POST requests with auth."""
         try:
-            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint))
+            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint), timeout=60)
             
             # Handle 401 with refresh retry
             if response.status_code == 401 and self._refresh_session():
@@ -214,6 +287,85 @@ class Mechanex:
             return response.json()
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, f"POST {endpoint} failed")
+
+    @staticmethod
+    def _parse_sse_events(lines) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        data_lines: List[str] = []
+
+        def flush_event() -> None:
+            if not data_lines:
+                return
+            payload = "\n".join(data_lines).strip()
+            data_lines.clear()
+            if not payload:
+                return
+            try:
+                evt = json.loads(payload)
+                if isinstance(evt, dict):
+                    events.append(evt)
+            except json.JSONDecodeError:
+                return
+
+        for raw in lines:
+            if raw is None:
+                continue
+            line = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+            line = line.rstrip("\r")
+            if line == "":
+                flush_event()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+
+        flush_event()
+        return events
+
+    def _post_sse(self, endpoint: str, data: dict = None) -> dict:
+        """POST helper for SSE endpoints that emit `data: {json}` events."""
+        response = None
+        try:
+            response = requests.post(
+                f"{self.base_url}{endpoint}",
+                json=data,
+                headers=self._get_headers(endpoint),
+                stream=True,
+            )
+            if response.status_code == 401 and self._refresh_session():
+                response = requests.post(
+                    f"{self.base_url}{endpoint}",
+                    json=data,
+                    headers=self._get_headers(endpoint),
+                    stream=True,
+                )
+            response.raise_for_status()
+
+            events = self._parse_sse_events(response.iter_lines())
+            if not events:
+                try:
+                    return response.json()
+                except Exception:
+                    return {}
+
+            for evt in events:
+                if evt.get("status") == "error":
+                    msg = evt.get("message") or "SSE endpoint returned an error"
+                    raise MechanexError(msg)
+
+            for evt in reversed(events):
+                if evt.get("status") == "complete":
+                    result = evt.get("result")
+                    return result if isinstance(result, dict) else evt
+
+            # No explicit complete event yet; return last parsed event.
+            return events[-1]
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, f"POST {endpoint} SSE failed")
+        finally:
+            if response is not None:
+                response.close()
 
     def set_key(self, api_key: str, persist: bool = False):
         """
@@ -342,6 +494,7 @@ class Mechanex:
         self.num_layers = None
         self._local_vectors = {}
         self._local_behaviors = {}
+        self._local_policies = {}
         import gc
         gc.collect()
         return self
@@ -350,8 +503,6 @@ class Mechanex:
         """
         Loads a model locally using TransformerLens and automatically configures SAE settings.
         """
-        if not self.api_key:
-            raise MechanexError("API key required. Call mx.set_key() first.")
         from transformer_lens import HookedTransformer
         print(f"Loading {model_name} locally...")
         
@@ -409,6 +560,10 @@ class Mechanex:
         
         return self
 
+    def check_waitlist(self, email: str) -> dict:
+        """Check if an email is approved for platform access."""
+        return self._get(f"/waitlist/check?email={email}")
+
     @staticmethod
     def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:
         """
@@ -416,7 +571,8 @@ class Mechanex:
         This is a static method and does not require a model to be loaded.
         """
         try:
-            response = requests.get(f"{host}/models")
+            url = host if host.startswith("http") else f"http://{host}:{port}"
+            response = requests.get(f"{url}/models")
             response.raise_for_status()
             return response.json().get("models", [])
         except requests.exceptions.RequestException as e:
@@ -459,5 +615,8 @@ class Mechanex:
             return NotFoundError(f"Resource not found: {message}", status_code, details)
         elif status_code == 422:
             return ValidationError(f"Validation error: {message}", status_code, details)
+        elif status_code == 429:
+            from .errors import RateLimitError
+            return RateLimitError(f"Rate limit exceeded: {message}", status_code, details)
         else:
             return APIError(f"{default_message}: {message}" if message != default_message else message, status_code, details)

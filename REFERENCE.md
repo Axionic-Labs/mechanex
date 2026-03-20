@@ -2,7 +2,10 @@
 
 # mechanex
 
-Mechanex: A Python client for the Axionic API.
+Mechanex: a policy-first runtime control SDK for Axionic inference.
+
+This reference documents callable APIs. For product workflow and positioning,
+see `README.md`.
 
 <a id="mechanex.generation"></a>
 
@@ -27,10 +30,24 @@ def generate(prompt: str,
              top_k: int = 50,
              top_p: float = 0.9,
              steering_strength: float = 0,
-             steering_vector=None) -> str
+             steering_vector=None,
+             temperature: float = 0.7,
+             min_p: Optional[float] = None,
+             typical_p: Optional[float] = None,
+             ads_subset_size: Optional[int] = None,
+             ads_beta: Optional[float] = None,
+             regex_pattern: Optional[str] = None,
+             grammar: Optional[str] = None,
+             json_schema: Optional[Dict[str, Any]] = None,
+             draft_model: Optional[str] = None,
+             ensemble_models: Optional[List[str]] = None,
+             best_of_n: int = 1,
+             policy: Optional[Dict[str, Any]] = None,
+             policy_id: Optional[str] = None,
+             include_trace: bool = False) -> str
 ```
 
-Runs a standard generation. Falls back to local model if available.
+Runs policy-aware generation (local or remote depending on execution mode).
 
 <a id="mechanex.serving"></a>
 
@@ -1038,4 +1055,3 @@ Initialize the module.
 
 - `client`: The main client instance.
 - `api_key`: Optional API key for Authorization.
-
