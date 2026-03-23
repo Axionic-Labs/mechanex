@@ -4,6 +4,10 @@ on:
   pull_request:
     branches: [main, development]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   changelog:
     name: Changelog Check
@@ -27,7 +31,7 @@ jobs:
             else
               echo "::warning::CHANGELOG.md was not updated. Consider adding a changelog entry."
               gh pr comment "$PR_NUMBER" --body "**Changelog reminder**: this PR does not include a CHANGELOG.md update. Consider adding one before merging." --edit-last 2>/dev/null || \
-              gh pr comment "$PR_NUMBER" --body "**Changelog reminder**: this PR does not include a CHANGELOG.md update. Consider adding one before merging."
+              gh pr comment "$PR_NUMBER" --body "**Changelog reminder**: this PR does not include a CHANGELOG.md update. Consider adding one before merging." 2>/dev/null || true
             fi
           else
             echo "CHANGELOG.md was updated."
