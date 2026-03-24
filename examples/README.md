@@ -22,6 +22,9 @@ This folder contains runnable policy-first workflows for:
 
 ## Example Catalog
 
+0. `mechanex_demo.ipynb` (Recommended)
+A comprehensive Jupyter notebook demo of all core features.
+
 1. `01_local_first_quickstart.py`
 Local policy run with strict JSON constraints and trace output.
 

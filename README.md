@@ -253,7 +253,9 @@ Account profile and key lifecycle tools:
 
 ## Examples
 
-See [examples/README.md](examples/README.md) for runnable workflows within the repository, including:
+See [mechanex_demo.ipynb](mechanex_demo.ipynb) for a comprehensive Jupyter notebook demo of all core features.
+
+Runnable scripts are available in [examples/README.md](examples/README.md):
 - `01_local_first_quickstart.py`
 - `02_remote_quickstart.py`
 - `03_sampling_strategies.py`
