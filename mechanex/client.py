@@ -19,7 +19,7 @@ class Mechanex:
     """
     A client for interacting with the Axionic API.
     """
-    DEFAULT_BACKEND_URL = "https://axionic-mvp-backend-594546489999.us-east4.run.app"
+    DEFAULT_BACKEND_URL = "https://axionic-backend-prod-594546489999.us-east4.run.app"
 
     def __init__(self, base_url: Optional[str] = None, local_model=None):
         resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL

@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="mechanex",
-    version="1.0.1",
+    version="1.0.2",
     author="Axionic Labs",
     author_email="contact@axioniclabs.ai",
     description="A Python client for the Axionic API.",
