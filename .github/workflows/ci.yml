@@ -2,6 +2,24 @@ name: Mechanex CI
 
 on:
   pull_request:
+
+      - name: Slack alert on failure
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+            CHANNEL="${{ secrets.SLACK_CHANNEL_PROD_ERRORS }}"
+          else
+            CHANNEL="${{ secrets.SLACK_CHANNEL_DEV_ERRORS }}"
+          fi
+          [ -z "$CHANNEL" ] && exit 0
+          curl -sf -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\":\"$CHANNEL\",\"text\":\":red_circle: CI failed: $GITHUB_WORKFLOW on ${GITHUB_REPOSITORY#*/} ($BRANCH)\"}" > /dev/null
+
   push:
     branches:
       - main
