@@ -1,3 +1,5 @@
+import gc
+
 import torch
 from typing import List, Tuple, Callable, Optional, Union
 import dataclasses
@@ -825,7 +827,7 @@ def make_melbo_loss_funcs(target_layer):
 		hook_dict['activs'] = x
 		return x
 
-	def melbo_loss_func(model, datapoints, layer, vector, matrix_left, matrix_right, target_layer_activs=None, only_hook_prompt=None, only_calculate_loss=False):
+	def melbo_loss_func(model, datapoints, layer, vector, matrix_left, matrix_right, target_layer_activs=None, only_hook_prompt=None, only_calculate_loss=False, vector_clamp=None):
 		loss = 0
 		hook_point = f'blocks.{target_layer}.hook_resid_pre'
 		for datapoint_idx, datapoint in enumerate(datapoints):
@@ -916,6 +918,21 @@ def optimize_vector_minibatch_hf(model, tokenizer, prompts, layer,
 		vector = vector.cuda()
 	vector.requires_grad_(True)
 
+	if affine_rank is not None:
+		matrix_left = torch.randn(affine_rank, d_model)
+		matrix_right = torch.randn(affine_rank, d_model)
+		if max_affine_norm is not None:
+			starting_affine_norm = max_affine_norm
+		matrix_left = torch.einsum('rm, r -> rm', matrix_left, starting_affine_norm/matrix_left.norm(dim=1))
+		matrix_right = torch.einsum('rm, r -> rm', matrix_right, starting_affine_norm/matrix_right.norm(dim=1))
+		matrix_left = matrix_left.cuda()
+		matrix_right = matrix_right.cuda()
+		matrix_left.requires_grad_(True)
+		matrix_right.requires_grad_(True)
+	else:
+		matrix_left = None
+		matrix_right = None
+
 	def get_completion_minibatch_loss(prompts, completion, vector, matrix=None, is_src_completion=True):
 		prompt_lens = []
 		for prompt in prompts:
@@ -953,7 +970,10 @@ def optimize_vector_minibatch_hf(model, tokenizer, prompts, layer,
 		return cur_loss
 
 	
-	optimizer = torch.optim.Adam([vector], lr=lr)
+	params = [vector]
+	if matrix_left is not None and matrix_right is not None:
+		params += [matrix_left, matrix_right]
+	optimizer = torch.optim.Adam(params, lr=lr)
 
 	loss = None
 	prev_loss = None
