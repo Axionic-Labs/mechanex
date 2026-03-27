@@ -2,24 +2,6 @@ name: Mechanex CI
 
 on:
   pull_request:
-
-      - name: Slack alert on failure
-        if: failure()
-        env:
-          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-        run: |
-          BRANCH="${GITHUB_REF_NAME}"
-          if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
-            CHANNEL="${{ secrets.SLACK_CHANNEL_PROD_ERRORS }}"
-          else
-            CHANNEL="${{ secrets.SLACK_CHANNEL_DEV_ERRORS }}"
-          fi
-          [ -z "$CHANNEL" ] && exit 0
-          curl -sf -X POST https://slack.com/api/chat.postMessage \
-            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{\"channel\":\"$CHANNEL\",\"text\":\":red_circle: CI failed: $GITHUB_WORKFLOW on ${GITHUB_REPOSITORY#*/} ($BRANCH)\"}" > /dev/null
-
   push:
     branches:
       - main
@@ -32,7 +14,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dev dependencies
         run: |
@@ -50,6 +32,23 @@ jobs:
           coverage run -m unittest discover -s tests -v
           coverage report --fail-under=70
 
+      - name: Slack alert on failure
+        if: failure()
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          if [[ "$BRANCH" == "main" || "$BRANCH" == "master" ]]; then
+            CHANNEL="${{ secrets.SLACK_CHANNEL_PROD_ERRORS }}"
+          else
+            CHANNEL="${{ secrets.SLACK_CHANNEL_DEV_ERRORS }}"
+          fi
+          [ -z "$CHANNEL" ] && exit 0
+          curl -sf -X POST https://slack.com/api/chat.postMessage \
+            -H "Authorization: Bearer $SLACK_BOT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"channel\":\"$CHANNEL\",\"text\":\":red_circle: CI failed: $GITHUB_WORKFLOW on ${GITHUB_REPOSITORY#*/} ($BRANCH)\",\"blocks\":[{\"type\":\"section\",\"text\":{\"type\":\"mrkdwn\",\"text\":\":red_circle: *CI Failure*\n*Repo:* \`${GITHUB_REPOSITORY#*/}\`\n*Workflow:* $GITHUB_WORKFLOW\n*Branch:* \`$BRANCH\`\"}},{\"type\":\"actions\",\"elements\":[{\"type\":\"button\",\"text\":{\"type\":\"plain_text\",\"text\":\"View Run\"},\"url\":\"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}]}]}" > /dev/null
+
   integration:
     runs-on: self-hosted
     timeout-minutes: 20
@@ -59,7 +58,7 @@ jobs:
       MECHANEX_INTEGRATION_API_KEY: ${{ secrets.MECHANEX_INTEGRATION_API_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dev dependencies
         run: |
