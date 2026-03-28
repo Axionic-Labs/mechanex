@@ -10,3 +10,5 @@ torch>=2.2.0
 tqdm>=4.66.0
 jsonschema>=4.22.0
 typing-extensions>=4.10.0
+types-requests>=2.31.0
+types-PyYAML>=6.0.0

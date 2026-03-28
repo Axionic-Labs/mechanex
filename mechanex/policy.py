@@ -13,7 +13,7 @@ from .base import _BaseModule
 from .errors import MechanexError
 
 try:
-    import jsonschema  # type: ignore
+    import jsonschema
 except Exception:  # pragma: no cover
     jsonschema = None
 
@@ -192,7 +192,7 @@ class PolicyModule(_BaseModule):
             "description": description,
         }
         resp = self._post("/policies/presets/publish", payload)
-        preset_id = resp.get("preset_id")
+        preset_id = resp.get("preset_id")  # type: ignore[assignment]
         if not preset_id:
             raise MechanexError(f"Failed to publish preset: {resp}")
         return preset_id
@@ -396,7 +396,7 @@ class PolicyModule(_BaseModule):
                 )
 
             candidates.extend(round_candidates)
-            accepted = [c for c in candidates if c["accepted"]]
+            accepted = [c for c in candidates if c["accepted"]]  # type: ignore[assignment]
             winner = sorted(accepted or candidates, key=lambda x: (x["score"], -x["latency_ms"]), reverse=True)[0]
             needs_confidence_retry = confidence_retry and float(winner.get("score", 0.0)) < confidence_threshold
             if winner["accepted"] and not needs_confidence_retry:
