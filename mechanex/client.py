@@ -1,0 +1,622 @@
+import requests
+import torch
+import numpy as np
+import json
+import os
+from typing import Optional, List, Dict, Any
+
+from .errors import MechanexError
+from .attribution import AttributionModule
+from .steering import SteeringModule
+from .raag import RAAGModule
+from .generation import GenerationModule
+from .model import ModelModule
+from .base import _BaseModule
+from .sae import SAEModule
+from .policy import PolicyModule
+
+class Mechanex:
+    """
+    A client for interacting with the Axionic API.
+    """
+    DEFAULT_BACKEND_URL = "https://axionic-backend-prod-594546489999.us-east4.run.app"
+
+    def __init__(self, base_url: Optional[str] = None, local_model=None):
+        resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL
+        self.base_url = resolved_base_url.rstrip("/")
+        self.local_model = local_model
+        self._local_vectors = {}
+        self._local_behaviors = {}
+        self._local_policies = {}
+        self._local_policy_presets = {}
+        self.model_name: Optional[str] = None
+        self.num_layers: Optional[int] = None
+        self.api_key = None
+        self.access_token = None
+        self.refresh_token = None
+        self.execution_mode = "auto"
+
+        # Try to load credentials from config file
+        try:
+            import json
+            from pathlib import Path
+            config_path = Path.home() / ".mechanex" / "config.json"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+                    if "api_key" in config:
+                        self.api_key = config["api_key"]
+                    if "access_token" in config:
+                        self.access_token = config["access_token"]
+                    if "refresh_token" in config:
+                        self.refresh_token = config["refresh_token"]
+        except Exception:
+            pass # Fail silently if config cannot be read
+
+        # Initialize API modules
+        self.attribution = AttributionModule(self)
+        self.steering = SteeringModule(self)
+        self.raag = RAAGModule(self)
+        self.generation = GenerationModule(self)
+        self.model = ModelModule(self)
+        self.sae = SAEModule(self)
+        self.policy = PolicyModule(self)
+
+    def set_execution_mode(self, mode: str = "auto") -> 'Mechanex':
+        """
+        Controls runtime routing:
+        - auto: remote when authenticated, otherwise local if model is loaded
+        - remote: force API execution
+        - local: force local execution
+        """
+        normalized = (mode or "").strip().lower()
+        if normalized not in ("auto", "remote", "local"):
+            raise MechanexError("Execution mode must be one of: auto, remote, local")
+        self.execution_mode = normalized
+        return self
+
+    def should_use_local(self, require_model: bool = True) -> bool:
+        """
+        Resolve execution target based on explicit mode and available resources.
+
+        Args:
+            require_model: If True (default), raises when mode is 'local' but no
+                model is loaded.  Pass False for non-inference operations (CRUD).
+        """
+        if self.execution_mode == "local":
+            if require_model and self.local_model is None:
+                raise MechanexError("Execution mode is 'local' but no local model is loaded.")
+            return True
+
+        if self.execution_mode == "remote":
+            return False
+
+        # auto mode
+        if self.local_model is not None and not (self.api_key or self.access_token):
+            return True
+        return False
+
+    def signup(self, email, password):
+        """Register a new user."""
+        try:
+            # Note: signup doesn't require auth headers usually
+            response = requests.post(f"{self.base_url}/auth/signup", json={"email": email, "password": password})
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, "Signup failed")
+
+    def login(self, email, password):
+        """Authenticate and set access token (JWT)."""
+        try:
+            # Login doesn't require auth headers
+            response = requests.post(f"{self.base_url}/auth/login", json={"email": email, "password": password})
+            response.raise_for_status()
+            data = response.json()
+            
+            if "session" in data:
+                 if "access_token" in data["session"]:
+                    self.access_token = data["session"]["access_token"]
+                 if "refresh_token" in data["session"]:
+                    self.refresh_token = data["session"]["refresh_token"]
+            return data
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, "Login failed")
+
+    def list_api_keys(self):
+        """List API keys for the current user."""
+        return self._get("/auth/api-keys")
+
+    def create_api_key(self, name: str = "Default Key"):
+        """Create a new API key for the current user."""
+        return self._post("/auth/api-keys", {"name": name})
+
+    def get_balance(self):
+        """Get the current balance for the authenticated user and handling different response formats."""
+        res = self._get("/auth/api-keys/balance")
+        return res
+
+    def whoami(self):
+        """Get current user information. Also verifies API key if one is set."""
+        user = self._get("/auth/whoami")
+
+        # Verify API key separately using a lightweight inference-path endpoint
+        # /graph uses verify_api_key on the backend, so it actually tests the key
+        if self.api_key:
+            try:
+                headers = {"x-api-key": self.api_key}
+                resp = requests.get(f"{self.base_url}/graph", headers=headers, timeout=5)
+                if resp.status_code == 401:
+                    import warnings
+                    warnings.warn(
+                        "Your API key may be invalid or revoked. "
+                        "Run `mechanex list-api-keys` to check.",
+                        stacklevel=2,
+                    )
+            except Exception:
+                pass  # Network error — skip validation silently
+
+        return user
+        
+    def get_subscription_products(self):
+        """List available subscription products and prices from Stripe."""
+        return self._get("/payments/subscriptions")
+        
+    def create_checkout_session(self, price_id: str):
+        """Create a Stripe Checkout Session."""
+        # Authentication is handled by _get_headers using the stored JWT
+        return self._post(f"/payments/checkout?price_id={price_id}")
+
+    def change_password(self, new_password: str):
+        """Change the authenticated user's password."""
+        return self._post("/auth/change-password", {"new_password": new_password})
+
+    def change_email(self, new_email: str):
+        """Change the authenticated user's email."""
+        return self._post("/auth/change-email", {"new_email": new_email})
+
+    def delete_account(self):
+        """Permanently delete the authenticated user's account."""
+        url = f"{self.base_url}/auth/delete-account"
+        headers = self._get_headers("/auth/delete-account")
+        try:
+            response = requests.delete(url, headers=headers)
+            if response.status_code == 401 and self._refresh_session():
+                 response = requests.delete(url, headers=self._get_headers("/auth/delete-account"))
+            response.raise_for_status()
+            
+            # Reset local state
+            self.access_token = None
+            self.refresh_token = None
+            self.api_key = None
+            self._save_config()
+            
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, "DELETE /auth/delete-account failed")
+
+    def serve(self, model=None, host="0.0.0.0", port=8000, use_vllm=False, corrected_behaviors: Optional[List[str]] = None):
+        """Turn the model into an OpenAI compatible endpoint."""
+        from .serving import run_server
+        run_server(self, model, host, port, use_vllm=use_vllm, corrected_behaviors=corrected_behaviors)
+
+    def _get_headers(self, endpoint: str = "") -> dict:
+        """
+        Return headers including Authorization (JWT) or x-api-key.
+        Uses route-aware auth (BUG-5): management endpoints prefer JWT,
+        inference endpoints prefer API key. Only sends ONE auth mechanism.
+        """
+        headers = {}
+        authenticated = False
+
+        is_management = (
+            endpoint.startswith("/auth/")
+            or endpoint.startswith("/payments/")
+            or endpoint.startswith("/waitlist/")
+        )
+
+        if is_management and self.access_token:
+            # Management endpoints prefer JWT
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+        elif self.api_key:
+            # Inference endpoints (or management without JWT) prefer API key
+            headers["x-api-key"] = self.api_key
+            authenticated = True
+        elif self.access_token:
+            # Fallback to JWT if no API key
+            headers["Authorization"] = f"Bearer {self.access_token}"
+            authenticated = True
+
+        if not authenticated:
+            raise MechanexError("Authentication required. Please provide an API key or log in.")
+
+        return headers
+    
+    def _refresh_session(self):
+        """Attempt to refresh the session using the refresh token."""
+        if not hasattr(self, "refresh_token") or not self.refresh_token:
+            return False
+        
+        try:
+            response = requests.post(f"{self.base_url}/auth/refresh", json={"refresh_token": self.refresh_token})
+            # Don't raise here, valid failure
+            if response.status_code != 200:
+                return False
+
+            data = response.json()
+            
+            if "session" in data:
+                session = data["session"]
+                if "access_token" in session:
+                    self.access_token = session["access_token"]
+                if "refresh_token" in session:
+                    self.refresh_token = session["refresh_token"]
+                
+                # Update config file if it exists
+                self.set_token(self.access_token, self.refresh_token, persist=True)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _get(self, endpoint: str) -> dict:
+        """Internal helper for GET requests with auth."""
+        try:
+            response = requests.get(f"{self.base_url}{endpoint}", headers=self._get_headers(endpoint))
+            
+            # Handle 401 with refresh retry
+            if response.status_code == 401 and self._refresh_session():
+                 response = requests.get(f"{self.base_url}{endpoint}", headers=self._get_headers(endpoint))
+
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, f"GET {endpoint} failed")
+
+    def _post(self, endpoint: str, data: dict = None) -> dict:
+        """Internal helper for POST requests with auth."""
+        try:
+            response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint), timeout=60)
+            
+            # Handle 401 with refresh retry
+            if response.status_code == 401 and self._refresh_session():
+                response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint))
+
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, f"POST {endpoint} failed")
+
+    @staticmethod
+    def _parse_sse_events(lines) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        data_lines: List[str] = []
+
+        def flush_event() -> None:
+            if not data_lines:
+                return
+            payload = "\n".join(data_lines).strip()
+            data_lines.clear()
+            if not payload:
+                return
+            try:
+                evt = json.loads(payload)
+                if isinstance(evt, dict):
+                    events.append(evt)
+            except json.JSONDecodeError:
+                return
+
+        for raw in lines:
+            if raw is None:
+                continue
+            line = raw.decode("utf-8", errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw)
+            line = line.rstrip("\r")
+            if line == "":
+                flush_event()
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+
+        flush_event()
+        return events
+
+    def _post_sse(self, endpoint: str, data: dict = None) -> dict:
+        """POST helper for SSE endpoints that emit `data: {json}` events."""
+        response = None
+        try:
+            response = requests.post(
+                f"{self.base_url}{endpoint}",
+                json=data,
+                headers=self._get_headers(endpoint),
+                stream=True,
+            )
+            if response.status_code == 401 and self._refresh_session():
+                response = requests.post(
+                    f"{self.base_url}{endpoint}",
+                    json=data,
+                    headers=self._get_headers(endpoint),
+                    stream=True,
+                )
+            response.raise_for_status()
+
+            events = self._parse_sse_events(response.iter_lines())
+            if not events:
+                try:
+                    return response.json()
+                except Exception:
+                    return {}
+
+            for evt in events:
+                if evt.get("status") == "error":
+                    msg = evt.get("message") or "SSE endpoint returned an error"
+                    raise MechanexError(msg)
+
+            for evt in reversed(events):
+                if evt.get("status") == "complete":
+                    result = evt.get("result")
+                    return result if isinstance(result, dict) else evt
+
+            # No explicit complete event yet; return last parsed event.
+            return events[-1]
+        except requests.exceptions.RequestException as e:
+            raise self._handle_request_error(e, f"POST {endpoint} SSE failed")
+        finally:
+            if response is not None:
+                response.close()
+
+    def set_key(self, api_key: str, persist: bool = False):
+        """
+        Sets the API key for the client.
+        
+        Args:
+            api_key (str): The Axionic API key.
+            persist (bool): If True, saves the key to the local config file (~/.mechanex/config.json).
+        """
+        self.api_key = api_key
+        
+        if persist:
+            self._save_config()
+
+    def set_token(self, access_token: str, refresh_token: str = None, persist: bool = False):
+        """
+        Sets the access token (JWT) for the client.
+        """
+        self.access_token = access_token
+        if refresh_token:
+            self.refresh_token = refresh_token
+        
+        if persist:
+            self._save_config()
+
+    def _save_config(self):
+        """Internal helper to save current credentials to config."""
+        import json
+        from pathlib import Path
+        
+        config_dir = Path.home() / ".mechanex"
+        config_file = config_dir / "config.json"
+        
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        current_config = {}
+        if config_file.exists():
+            try:
+                with open(config_file, "r") as f:
+                    current_config = json.load(f)
+            except Exception:
+                pass
+        
+        if self.api_key:
+            current_config["api_key"] = self.api_key
+        if self.access_token:
+            current_config["access_token"] = self.access_token
+        if self.refresh_token:
+            current_config["refresh_token"] = self.refresh_token
+        
+        with open(config_file, "w") as f:
+            json.dump(current_config, f)
+
+    def set_model(self, model_name: str) -> dict:
+        """
+        Sets the remote model for the current API key.
+        
+        Args:
+            model_name (str): The name of the model to use (e.g. "gpt2-small").
+        """
+        if not self.api_key:
+            raise MechanexError("API key required. Call mx.set_key() first.")
+
+        # Fetch and validate models
+        try:
+            response = self._get("/models")
+            # Handle different potential response formats
+            available_models = []
+            if isinstance(response, list):
+                available_models = response
+            elif isinstance(response, dict) and "models" in response:
+                available_models = response["models"]
+            
+            valid_names = [m.get("name") for m in available_models if isinstance(m, dict) and "name" in m]
+            
+            if valid_names and model_name not in valid_names:
+                print(f"Error: Model '{model_name}' is not available.")
+                print("Available models:")
+                for name in valid_names:
+                    print(f" - {name}")
+                raise MechanexError(f"Invalid model name: {model_name}")
+                
+        except Exception as e:
+            if isinstance(e, MechanexError):
+                raise e
+            # Proceed with warning if model listing fails
+            print(f"Warning: Could not fetch model list to validate '{model_name}': {e}")
+
+        # The backend now infers the API key ID from the Bearer token, so we just send the model name
+        self._post("/auth/api-keys/set-model", {
+            "model_name": model_name
+        })
+
+    def set_local_model(self, model):
+        """Set a local model (e.g. TransformerLens) for local steering fallback."""
+        self.local_model = model
+        return self
+
+    def load(self, model_name: str, **kwargs) -> 'Mechanex':
+        """
+        Alias for load_model.
+        """
+        return self.load_model(model_name, **kwargs)
+
+    def unload(self) -> 'Mechanex':
+        """
+        Alias for unload_model.
+        """
+        return self.unload_model()
+
+    def unload_model(self) -> 'Mechanex':
+        """
+        Unloads the local model and clears associated metadata.
+        """
+        if self.local_model is not None:
+            model_name = getattr(self, "model_name", "model")
+            print(f"Unloading {model_name}...")
+            # Explicitly move to CPU and clear cache if possible before deletion
+            if hasattr(self.local_model, "to"):
+                self.local_model.to("cpu")
+            self.local_model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        self.model_name = None
+        self.num_layers = None
+        self._local_vectors = {}
+        self._local_behaviors = {}
+        self._local_policies = {}
+        import gc
+        gc.collect()
+        return self
+
+    def load_model(self, model_name: str, **kwargs) -> 'Mechanex':
+        """
+        Loads a model locally using TransformerLens and automatically configures SAE settings.
+        """
+        from transformer_lens import HookedTransformer
+        print(f"Loading {model_name} locally...")
+        
+        device = kwargs.pop("device", "cuda" if torch.cuda.is_available() else "cpu")
+        self.local_model = HookedTransformer.from_pretrained(model_name, device=device, **kwargs)
+        self.model_name = model_name
+        self.num_layers = self.local_model.cfg.n_layers
+
+        # Automatically set SAE release based on model name
+        # Automatically set SAE release based on sae_mapping.yaml
+        release = None
+        try:
+            import yaml
+            from pathlib import Path
+            
+            # Locate yaml file relative to this file
+            yaml_path = Path(__file__).parent / "utils" / "sae_mapping.yaml"
+            
+            if yaml_path.exists():
+                with open(yaml_path, "r") as f:
+                    sae_map_data = yaml.safe_load(f)
+                
+                # Search for matching releases
+                matches = []
+                for release_name, info in sae_map_data.items():
+                    if info.get("model") == model_name:
+                        matches.append(release_name)
+                
+                if matches:
+                    # Prefer releases with 'res' in the name (residual stream usually default)
+                    res_matches = [m for m in matches if "res" in m]
+                    if res_matches:
+                        release = res_matches[0]
+                    else:
+                        release = matches[0]
+        except Exception as e:
+            print(f"Warning: Failed to load SAE mapping from YAML: {e}")
+
+        # Fallback to heuristics if not found in YAML
+        if not release:
+            # Heuristic for Gemma models not explicitly in mapping
+            if "gemma-3" in model_name:
+                size = "4b" if "4b" in model_name else ("12b" if "12b" in model_name else "27b")
+                mode = "it" if "-it" in model_name else "pt"
+                release = f"gemma-scope-2-{size}-{mode}-res"
+            elif "gemma-2" in model_name:
+                size = "2b" if "2b" in model_name else ("9b" if "9b" in model_name else "27b")
+                mode = "it" if "-it" in model_name else "pt"
+                release = f"gemma-scope-{size}-{mode}-res"
+            else:
+                release = f"{model_name}-res-jb"
+                
+        self.sae.sae_release = release
+        print(f"SAE release automatically set to: {release}")
+        
+        return self
+
+    def check_waitlist(self, email: str) -> dict:
+        """Check if an email is approved for platform access."""
+        return self._get(f"/waitlist/check?email={email}")
+
+    @staticmethod
+    def get_huggingface_models(host: str = "127.0.0.1", port: int = 8000) -> List[str]:
+        """
+        Fetches the list of available public models from Hugging Face.
+        This is a static method and does not require a model to be loaded.
+        """
+        try:
+            url = host if host.startswith("http") else f"http://{host}:{port}"
+            response = requests.get(f"{url}/models")
+            response.raise_for_status()
+            return response.json().get("models", [])
+        except requests.exceptions.RequestException as e:
+            from .errors import APIError
+            message = "Could not fetch Hugging Face models"
+            if e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    if isinstance(error_data, dict) and "detail" in error_data:
+                        message = error_data["detail"]
+                    else:
+                        message = str(error_data)
+                except Exception:
+                    message = e.response.text or message
+            raise APIError(message, getattr(e.response, 'status_code', None)) from e
+
+    def _handle_request_error(self, e: requests.exceptions.RequestException, default_message: str):
+        """Internal helper to parse requests errors and raise appropriate MechanexError."""
+        from .errors import APIError, AuthenticationError, NotFoundError, ValidationError
+        
+        message = default_message
+        status_code = None
+        details = None
+
+        if e.response is not None:
+            status_code = e.response.status_code
+            try:
+                error_data = e.response.json()
+                if isinstance(error_data, dict) and "detail" in error_data:
+                    message = error_data["detail"]
+                else:
+                    message = str(error_data)
+                details = error_data
+            except Exception:
+                message = e.response.text or message
+
+        if status_code == 401:
+            return AuthenticationError(f"Authentication failed: {message}", status_code, details)
+        elif status_code == 404:
+            return NotFoundError(f"Resource not found: {message}", status_code, details)
+        elif status_code == 422:
+            return ValidationError(f"Validation error: {message}", status_code, details)
+        elif status_code == 429:
+            from .errors import RateLimitError
+            return RateLimitError(f"Rate limit exceeded: {message}", status_code, details)
+        else:
+            return APIError(f"{default_message}: {message}" if message != default_message else message, status_code, details)

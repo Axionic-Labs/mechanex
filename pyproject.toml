@@ -14,7 +14,7 @@ python_version = "3.10"
 ignore_missing_imports = true
 follow_imports = "silent"
 warn_redundant_casts = true
-warn_unused_ignores = false
+warn_unused_ignores = true
 pretty = true
 check_untyped_defs = false
 files = [
@@ -24,15 +24,8 @@ files = [
   "mechanex/policy.py",
   "mechanex/steering.py",
   "mechanex/sae.py",
+  "tests",
 ]
-
-[[tool.mypy.overrides]]
-module = "mechanex.generation"
-disable_error_code = ["dict-item", "misc"]
-
-[[tool.mypy.overrides]]
-module = "mechanex.policy"
-disable_error_code = ["arg-type"]
 
 [tool.coverage.run]
 branch = true
