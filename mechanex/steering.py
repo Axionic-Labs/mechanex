@@ -1,6 +1,6 @@
 import json
 import torch
-from typing import List, Optional, Dict, Union
+from typing import Any,  List, Optional, Dict, Union
 from tqdm import tqdm
 from .base import _BaseModule
 from .errors import AuthenticationError, MechanexError
@@ -19,7 +19,7 @@ class CAA(SteeringVectorMethod):
         prompts: List[str],
         positive_answers: List[str],
         negative_answers: List[str],
-        layer_idxs: List[int] = None
+        layer_idxs: Optional[List[int]] = None
     ) -> Dict[int, torch.Tensor]:
         if not (len(prompts) == len(positive_answers) == len(negative_answers)):
             raise ValueError("prompts, positive_answers, and negative_answers must be the same length.")
@@ -32,8 +32,8 @@ class CAA(SteeringVectorMethod):
         else:
             self.check_layer_in_range(layer_idxs)
 
-        pos_activations = {idx: [] for idx in layer_idxs}
-        neg_activations = {idx: [] for idx in layer_idxs}
+        pos_activations: dict[int, list] = {idx: [] for idx in layer_idxs}
+        neg_activations: dict[int, list] = {idx: [] for idx in layer_idxs}
 
         print("Processing prompts to generate steering vectors...")
         for p, pos_answer, neg_answer in tqdm(zip(prompts, positive_answers, negative_answers), total=len(prompts)):
@@ -89,7 +89,7 @@ class FewShot(SteeringVectorMethod):
         prompts: List[str],
         positive_answers: List[str],
         negative_answers: List[str],
-        layer_idxs: List[int] = None
+        layer_idxs: Optional[List[int]] = None
     ) -> Dict[int, torch.Tensor]:
         from .utils import steering_opt
 
@@ -173,7 +173,7 @@ class SteeringModule(_BaseModule):
             raise MechanexError("Steering perceptrons are not supported for local execution.")
 
         if method_normalized == "caa":
-            steerer = CAA(local_model)
+            steerer: Any = CAA(local_model)
         else:
             steerer = FewShot(local_model)
 

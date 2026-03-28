@@ -200,7 +200,7 @@ class SAEModule(_BaseModule):
 
     def list_behaviors(self) -> List[Dict[str, Any]]:
         """Returns behaviors. Combines remote and local if available."""
-        remote_behaviors = []
+        remote_behaviors: Any = []
         try:
             if (self._client.api_key or self._client.access_token) and not self._client.should_use_local():
                 remote_behaviors = self._get("/behaviors")
