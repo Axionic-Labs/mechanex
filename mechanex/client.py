@@ -607,6 +607,12 @@ class Mechanex:
 
         if status_code == 401:
             return AuthenticationError(f"Authentication failed: {message}", status_code, details)
+        elif status_code == 402:
+            from .errors import InsufficientCreditsError
+            return InsufficientCreditsError(
+                f"Insufficient credits: {message}. Run `mechanex topup` to add credits.",
+                status_code, details,
+            )
         elif status_code == 404:
             return NotFoundError(f"Resource not found: {message}", status_code, details)
         elif status_code == 422:
