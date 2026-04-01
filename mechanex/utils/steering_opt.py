@@ -1,3 +1,4 @@
+import gc
 import torch
 from typing import List, Tuple, Callable, Optional, Union
 import dataclasses
@@ -784,7 +785,7 @@ def optimize_vector(model, datapoints, layer,
 		retvals = retvals + (retdict,)
 	return retvals
 
-def make_melbo_loss_funcs(target_layer):
+def make_melbo_loss_funcs(target_layer, vector_clamp=None):
 	"""
 	Make custom loss functions for performing MELBO (www.lesswrong.com/posts/ioPnHKFyy4Cw2Gr2x) in conjunction with output-constrained optimization. Only supports TransformerLens.
 
@@ -915,6 +916,19 @@ def optimize_vector_minibatch_hf(model, tokenizer, prompts, layer,
 		vector = starting_norm * vector / vector.norm()
 		vector = vector.cuda()
 	vector.requires_grad_(True)
+
+	if affine_rank is not None:
+		starting_an = max_affine_norm if max_affine_norm is not None else 1
+		with torch.no_grad():
+			matrix_left = torch.randn(affine_rank, d_model).cuda()
+			matrix_right = torch.randn(affine_rank, d_model).cuda()
+			matrix_left = torch.einsum('rm, r -> rm', matrix_left, starting_an / matrix_left.norm(dim=1))
+			matrix_right = torch.einsum('rm, r -> rm', matrix_right, starting_an / matrix_right.norm(dim=1))
+		matrix_left.requires_grad_(True)
+		matrix_right.requires_grad_(True)
+	else:
+		matrix_left = None
+		matrix_right = None
 
 	def get_completion_minibatch_loss(prompts, completion, vector, matrix=None, is_src_completion=True):
 		prompt_lens = []
