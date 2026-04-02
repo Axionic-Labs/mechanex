@@ -1,3 +1,5 @@
+from typing import Optional
+
 import requests
 from .errors import MechanexError
 
@@ -16,10 +18,10 @@ class _BaseModule:
     def _handle_error(self, e: requests.exceptions.RequestException):
         """Internal helper to parse requests errors and raise appropriate MechanexError."""
         from .errors import APIError, AuthenticationError, NotFoundError, ValidationError
-        
-        message = f"Request failed"
-        status_code = None
-        details = None
+
+        message: str = "Request failed"
+        status_code: Optional[int] = None
+        details: Optional[dict] = None
 
         if e.response is not None:
             status_code = e.response.status_code

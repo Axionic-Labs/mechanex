@@ -1,6 +1,9 @@
+from typing import Optional
+
+
 class MechanexError(Exception):
     """Base exception for the Mechanex library."""
-    def __init__(self, message: str, status_code: int = None, details: dict = None):
+    def __init__(self, message: str, status_code: Optional[int] = None, details: Optional[dict] = None):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
