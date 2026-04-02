@@ -386,11 +386,11 @@ _constraint_cases.extend(
     ]
 )
 
-for idx, case in enumerate(_constraint_cases * 3):  # 60 tests
+for _idx, _case in enumerate(_constraint_cases * 3):
     setattr(
         TestConstraintMatrix,
-        f"test_constraint_case_{idx:03d}",
-        _make_constraint_test(*case),
+        f"test_constraint_case_{_idx:03d}",
+        _make_constraint_test(_case[0], _case[1], _case[2]),
     )
 
 
@@ -426,11 +426,11 @@ _verifier_cases = [
     ("hello", {"regex_pattern": r"\d+"}, {"enabled": ["regex"]}, True),
 ]
 
-for idx, case in enumerate(_verifier_cases * 4):  # 24 tests
+for _vidx, _vcase in enumerate(_verifier_cases * 4):
     setattr(
         TestVerifierMatrix,
-        f"test_verifier_case_{idx:03d}",
-        _make_verifier_test(*case),
+        f"test_verifier_case_{_vidx:03d}",
+        _make_verifier_test(_vcase[0], _vcase[1], _vcase[2], _vcase[3]),
     )
 
 

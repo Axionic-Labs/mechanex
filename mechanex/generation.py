@@ -108,7 +108,7 @@ class GenerationModule(_BaseModule):
                         confidence_threshold=confidence_threshold,
                         code_unit_tests=code_unit_tests,
                     )
-                    payload = {
+                    payload: Dict[str, Any] = {
                         "prompt": prompt,
                         "policy_id": policy_id,
                         "policy": None if policy_id else runtime_policy,
@@ -249,7 +249,7 @@ class GenerationModule(_BaseModule):
             sampling["adaptive_top_p_schedule"] = adaptive_top_p_schedule
             sampling["adaptive_top_p"] = True
 
-        verifiers = {"enabled": [], "repair_on_failure": True}
+        verifiers: Dict[str, Any] = {"enabled": [], "repair_on_failure": True}
         if json_schema is not None:
             verifiers["enabled"] = ["syntax", "json_schema"]
         elif regex_pattern is not None:

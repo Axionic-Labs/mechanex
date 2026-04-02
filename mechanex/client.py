@@ -25,10 +25,10 @@ class Mechanex:
         resolved_base_url = base_url or os.getenv("MECHANEX_BASE_URL") or self.DEFAULT_BACKEND_URL
         self.base_url = resolved_base_url.rstrip("/")
         self.local_model = local_model
-        self._local_vectors = {}
-        self._local_behaviors = {}
-        self._local_policies = {}
-        self._local_policy_presets = {}
+        self._local_vectors: Dict[str, Any] = {}
+        self._local_behaviors: Dict[str, Any] = {}
+        self._local_policies: Dict[str, Any] = {}
+        self._local_policy_presets: Dict[str, Any] = {}
         self.model_name: Optional[str] = None
         self.num_layers: Optional[int] = None
         self.api_key = None
@@ -270,7 +270,7 @@ class Mechanex:
         except requests.exceptions.RequestException as e:
             raise self._handle_request_error(e, f"GET {endpoint} failed")
 
-    def _post(self, endpoint: str, data: dict = None) -> dict:
+    def _post(self, endpoint: str, data: Optional[dict] = None) -> dict:
         """Internal helper for POST requests with auth."""
         try:
             response = requests.post(f"{self.base_url}{endpoint}", json=data, headers=self._get_headers(endpoint), timeout=60)
@@ -319,7 +319,7 @@ class Mechanex:
         flush_event()
         return events
 
-    def _post_sse(self, endpoint: str, data: dict = None) -> dict:
+    def _post_sse(self, endpoint: str, data: Optional[dict] = None) -> dict:
         """POST helper for SSE endpoints that emit `data: {json}` events."""
         response = None
         try:
@@ -376,7 +376,7 @@ class Mechanex:
         if persist:
             self._save_config()
 
-    def set_token(self, access_token: str, refresh_token: str = None, persist: bool = False):
+    def set_token(self, access_token: str, refresh_token: Optional[str] = None, persist: bool = False):
         """
         Sets the access token (JWT) for the client.
         """
@@ -415,7 +415,7 @@ class Mechanex:
         with open(config_file, "w") as f:
             json.dump(current_config, f)
 
-    def set_model(self, model_name: str) -> dict:
+    def set_model(self, model_name: str) -> None:
         """
         Sets the remote model for the current API key.
         
@@ -589,9 +589,9 @@ class Mechanex:
         """Internal helper to parse requests errors and raise appropriate MechanexError."""
         from .errors import APIError, AuthenticationError, NotFoundError, ValidationError
         
-        message = default_message
-        status_code = None
-        details = None
+        message: str = default_message
+        status_code: Optional[int] = None
+        details: Optional[dict] = None
 
         if e.response is not None:
             status_code = e.response.status_code
