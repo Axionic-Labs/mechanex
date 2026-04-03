@@ -27,6 +27,14 @@ class NotFoundError(MechanexError):
     """Raised when a resource is not found."""
     pass
 
+class InsufficientCreditsError(MechanexError):
+    """Raised when the user's balance is too low for the requested operation.
+
+    Top up credits via the CLI: ``mechanex topup``
+    Or programmatically: ``mx.create_checkout_session(price_id)``
+    """
+    pass
+
 class RateLimitError(MechanexError):
     """Raised when rate limits are exceeded."""
     pass
