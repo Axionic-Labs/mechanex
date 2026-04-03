@@ -2,12 +2,34 @@ name: Mechanex CI
 
 on:
   pull_request:
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.github/**/*.md'
+      - '.vscode/**'
+      - '.editorconfig'
+      - '.env.example'
+      - 'CLAUDE.md'
+      - 'LICENSE'
   push:
     branches:
       - main
       - master
       - develop
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - '.github/**/*.md'
+      - '.vscode/**'
+      - '.editorconfig'
+      - '.env.example'
+      - 'CLAUDE.md'
+      - 'LICENSE'
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
