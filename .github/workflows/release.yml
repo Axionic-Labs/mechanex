@@ -6,7 +6,7 @@
 # separate terms of service, privacy policy, and support
 # documentation.
 
-name: Upload Python Package
+name: Publish Mechanex To PyPI
 
 on:
   release:
@@ -17,10 +17,10 @@ permissions:
 
 jobs:
   release-build:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build release distributions
         run: |
@@ -35,7 +35,7 @@ jobs:
           path: dist/
 
   pypi-publish:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
     needs:
       - release-build
     permissions:
@@ -45,7 +45,7 @@ jobs:
     # Dedicated environments with protections for publishing are strongly recommended.
     # For more information, see: https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#deployment-protection-rules
     environment:
-      name: pypi
+      name: prod
       # OPTIONAL: uncomment and update to include your PyPI project URL in the deployment status:
       # url: https://pypi.org/p/YOURPROJECT
       #
