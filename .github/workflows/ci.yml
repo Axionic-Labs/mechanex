@@ -2,42 +2,32 @@ name: Mechanex CI
 
 on:
   pull_request:
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - '.github/**/*.md'
-      - '.vscode/**'
-      - '.editorconfig'
-      - '.env.example'
-      - 'CLAUDE.md'
-      - 'LICENSE'
+    branches:
+      - development
+      - staging
+      - main
+  merge_group:
+    branches:
+      - staging
+      - main
   push:
     branches:
+      - development
+      - staging
       - main
-      - master
-      - develop
-    paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - '.github/**/*.md'
-      - '.vscode/**'
-      - '.editorconfig'
-      - '.env.example'
-      - 'CLAUDE.md'
-      - 'LICENSE'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   quality:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dev dependencies
         run: |
@@ -54,8 +44,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            TARGET_BRANCH="${GITHUB_BASE_REF}"
+          elif [ "${GITHUB_EVENT_NAME}" = "merge_group" ]; then
+            TARGET_BRANCH=$(printf '%s' "${GITHUB_REF}" | sed -E 's#refs/heads/gh-readonly-queue/([^/]+)/.*#\1#')
+          else
+            TARGET_BRANCH="${GITHUB_REF_NAME}"
+          fi
           mkdir -p tests/fixtures
-          gh api "repos/Axionic-Labs/axionic-mvp-backend/contents/openapi.json?ref=development" \
+          case "$TARGET_BRANCH" in
+            main) BACKEND_BRANCH="main" ;;
+            staging) BACKEND_BRANCH="staging" ;;
+            *) BACKEND_BRANCH="development" ;;
+          esac
+          gh api "repos/Axionic-Labs/axionic-mvp-backend/contents/openapi.json?ref=${BACKEND_BRANCH}" \
             --jq '.content' | base64 -d > tests/fixtures/backend-openapi.json || {
             echo "::warning::Could not fetch latest OpenAPI spec -- using committed fixture"
           }
@@ -65,8 +67,31 @@ jobs:
           coverage run -m unittest discover -s tests -v
           coverage report --fail-under=70
 
+  package:
+    if: >
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'pull_request' &&
+        (github.base_ref == 'staging' || github.base_ref == 'main')) ||
+      (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/staging' || github.ref == 'refs/heads/main'))
+    needs: [quality]
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+          python -m pip install build
+
+      - name: Build package
+        run: python -m build
+
   integration:
-    runs-on: self-hosted
+    runs-on: [self-hosted, linux, x64]
     timeout-minutes: 20
     if: github.event_name == 'workflow_dispatch'
     env:
@@ -74,7 +99,7 @@ jobs:
       MECHANEX_INTEGRATION_API_KEY: ${{ secrets.MECHANEX_INTEGRATION_API_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dev dependencies
         run: |
