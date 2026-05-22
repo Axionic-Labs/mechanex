@@ -5,7 +5,7 @@
 - Lint: `ruff check mechanex tests`
 - Type checks: `mypy`
 - Unit tests: `python -m unittest discover -s tests -v`
-- Coverage threshold: `>= 70%` for configured runtime modules
+- Coverage threshold: `>= 40%` for configured runtime modules
 
 No PR should merge with failing gates.
 

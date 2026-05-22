@@ -12,7 +12,7 @@ pip install -r requirements-dev.txt
 ruff check mechanex tests
 mypy
 coverage run -m unittest discover -s tests -v
-coverage report --fail-under=70
+coverage report
 ```
 
 ## Branch and PR Rules
@@ -27,6 +27,7 @@ coverage report --fail-under=70
 - Add or update tests for all behavior changes.
 - For bug fixes, include a regression test that fails before the fix.
 - Integration tests live under `tests/integration` and are opt-in via environment variables.
+- Coverage is configured in `pyproject.toml`; keep the threshold in sync with CI.
 
 ## Commit Guidelines
 

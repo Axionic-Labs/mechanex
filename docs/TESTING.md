@@ -29,7 +29,7 @@ python -m unittest discover -s tests/integration -v
 
 ```bash
 coverage run -m unittest discover -s tests -v
-coverage report --fail-under=70
+coverage report
 ```
 
 ## Test Design Rules

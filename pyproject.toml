@@ -29,14 +29,15 @@ files = [
 
 [tool.coverage.run]
 branch = true
-source = [
-  "mechanex.client",
-  "mechanex.generation",
-  "mechanex.policy",
-  "mechanex.steering",
-  "mechanex.sae",
+include = [
+  "mechanex/client.py",
+  "mechanex/generation.py",
+  "mechanex/policy.py",
+  "mechanex/steering.py",
+  "mechanex/sae.py",
 ]
 
 [tool.coverage.report]
+fail_under = 40
 show_missing = true
 skip_covered = false

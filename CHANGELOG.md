@@ -1,5 +1,13 @@
 # Changelog
 
+## May 22, 2026
+
+### CI
+
+- Updated release artifact actions to Node 24-compatible GitHub Actions versions.
+
+---
+
 ## March 27, 2026
 
 ### Bug Fixes

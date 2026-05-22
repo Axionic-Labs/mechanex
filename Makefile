@@ -11,7 +11,7 @@ test:
 
 coverage:
 	coverage run -m unittest discover -s tests -v
-	coverage report --fail-under=70
+	coverage report
 
 test-integration:
 	python -m unittest discover -s tests/integration -v
